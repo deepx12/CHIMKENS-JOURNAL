@@ -174,13 +174,20 @@
   }
 
   /* ── MOBILE ───────────────────────────────────── */
-  @media (max-width: 640px) {
-    #loading-screen { gap: 0; padding: 24px; }
-    #loader-book-wrap { margin-bottom: 32px; }
-    #loader-cover { width: 160px; height: 210px; }
-    #loader-title { font-size: 22px !important; letter-spacing: 0.12em !important; }
-    #loader-sub { font-size: 11px; margin-top: 8px; }
-    #loader-dots { margin-top: 28px; }
+  @media (max-width: 700px) {
+    #loading-screen {
+      padding: 20px 16px;
+      justify-content: center;
+      gap: 0;
+    }
+    #loader-book-wrap { margin-bottom: 28px; }
+    #loader-cover { width: 150px !important; height: 195px !important; }
+    #loader-title { font-size: 20px !important; letter-spacing: 0.14em !important; }
+    #loader-sub { font-size: 10px; margin-top: 8px; }
+    #loader-dots { margin-top: 24px; }
+    .tape.tape-h { display: none; }
+    .tape.tape-v { display: none; }
+    .page-edge { display: none; }
   }
 </style>
 </head>
@@ -1002,10 +1009,10 @@ function Flipbook() {
       const mobile = window.innerWidth < 700;
       setIsMobile(mobile);
       if (mobile) {
-        const controlsH = 80; // buttons row
-        const paddingH = 32;  // top+bottom padding
-        const maxW = window.innerWidth * 0.96;
-        const maxH = (window.innerHeight - controlsH - paddingH) * 0.97;
+        const controlsH = 90;
+        const safeArea = 40;
+        const maxW = window.innerWidth * 0.95;
+        const maxH = window.innerHeight - controlsH - safeArea;
         setViewScale(Math.min(maxW / PAGE_W, maxH / PAGE_H, 1));
       } else {
         const maxW = window.innerWidth * 0.85;
@@ -1082,14 +1089,16 @@ function Flipbook() {
 ﻿
   return (
     <div style={{
-      height: isMobile ? "100dvh" : "100vh",
-      maxHeight: isMobile ? "100dvh" : "none",
-      position: "relative", overflow: "hidden",
+      width: "100%",
+      height: isMobile ? ["100svh","100dvh","100vh"].find(u=>CSS.supports("height",u)) || "100vh" : "100vh",
+      position: "fixed", top: 0, left: 0,
+      overflow: "hidden",
       display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: isMobile ? "space-evenly" : "center",
+      alignItems: "center", justifyContent: "center",
+      gap: isMobile ? 0 : 0,
       userSelect: "none",
-      padding: isMobile ? "8px 8px 8px 8px" : "40px 20px",
-      touchAction: "pan-y",
+      padding: isMobile ? "12px 10px 16px" : "40px 20px",
+      touchAction: "none",
     }}
     onTouchStart={handleTouchStart}
     onTouchEnd={handleTouchEnd}
@@ -1111,7 +1120,9 @@ function Flipbook() {
 ﻿
       {/* Outer wrapper for scaling + parallax tilt */}
       <div ref={bookRef} style={{
-        transform: `perspective(1200px) scale(${viewScale}) rotateX(${flipping ? 0 : tilt.x}deg) rotateY(${flipping ? 0 : tilt.y}deg)`,
+        transform: isMobile
+          ? `scale(${viewScale})`
+          : `perspective(1200px) scale(${viewScale}) rotateX(${flipping ? 0 : tilt.x}deg) rotateY(${flipping ? 0 : tilt.y}deg)`,
         transformOrigin: "center center",
         transition: flipping ? "none" : "transform 0.12s ease-out, width 0.3s cubic-bezier(0.25, 0.1, 0.25, 1)",
         width: (leavingCover || leavingBack || arrivingBack) ? spreadWidth : visibleWidth,
@@ -1485,25 +1496,27 @@ function Flipbook() {
 ﻿
       {/* Controls */}
       <div style={{
-        marginTop: isMobile ? 0 : 48,
+        marginTop: isMobile ? 16 : 48,
         display: "flex", alignItems: "center",
-        gap: isMobile ? 12 : 18,
+        gap: isMobile ? 10 : 18,
         fontFamily: "'Space Mono', monospace",
         zIndex: 10, position: "relative",
         width: isMobile ? "100%" : "auto",
         justifyContent: "center",
-        paddingBottom: isMobile ? 8 : 0,
+        flexShrink: 0,
       }}>
         <button onClick={() => flipTo("prev")} disabled={currentSpread <= 0 || flipping}
           style={{
             background: currentSpread <= 0 ? "rgba(0,0,0,0.04)" : "rgba(20,14,8,0.85)", backdropFilter: "blur(8px)",
             border: "1.5px solid rgba(40,28,14,0.18)",
             color: currentSpread <= 0 ? "rgba(80,60,40,0.2)" : "rgba(245,235,220,0.95)",
-            padding: isMobile ? "14px 28px" : "10px 22px", borderRadius: 8,
+            width: isMobile ? 52 : "auto", height: isMobile ? 52 : "auto",
+            padding: isMobile ? "0" : "10px 22px", borderRadius: isMobile ? 26 : 8,
             cursor: currentSpread <= 0 ? "default" : "pointer",
-            fontSize: isMobile ? 20 : 15, letterSpacing: 2,
+            fontSize: isMobile ? 22 : 15, letterSpacing: 2,
             boxShadow: currentSpread <= 0 ? "none" : "0 2px 12px rgba(0,0,0,0.25)",
-            transition: "all 0.15s ease", minWidth: isMobile ? 60 : "auto",
+            transition: "all 0.15s ease",
+            display: "flex", alignItems: "center", justifyContent: "center",
           }}>{"←"}</button>
 ﻿
         {isEditMode && <button onClick={() => fileRef.current.click()}
@@ -1544,8 +1557,9 @@ function Flipbook() {
         }}>{isMobile ? "PUBLISH" : "⬆ PUBLISH"}</button>}
 ﻿
         <span style={{
-          fontSize: isMobile ? 10 : 11, color: "rgba(40,28,14,0.55)", letterSpacing: 3,
-          minWidth: isMobile ? 50 : 70, textAlign: "center",
+          fontSize: isMobile ? 11 : 11, color: "rgba(40,28,14,0.6)", letterSpacing: 2,
+          minWidth: isMobile ? 60 : 70, textAlign: "center",
+          fontWeight: "bold",
         }}>
           {currentSpread === 0 && !flipping ? "COVER" : currentSpread >= maxSpread && !flipping ? "END" : `${currentSpread} / ${maxSpread}`}
         </span>
@@ -1555,11 +1569,13 @@ function Flipbook() {
             background: currentSpread >= maxSpread ? "rgba(0,0,0,0.04)" : "rgba(20,14,8,0.85)", backdropFilter: "blur(8px)",
             border: "1.5px solid rgba(40,28,14,0.18)",
             color: currentSpread >= maxSpread ? "rgba(80,60,40,0.2)" : "rgba(245,235,220,0.95)",
-            padding: isMobile ? "14px 28px" : "10px 22px", borderRadius: 8,
+            width: isMobile ? 52 : "auto", height: isMobile ? 52 : "auto",
+            padding: isMobile ? "0" : "10px 22px", borderRadius: isMobile ? 26 : 8,
             cursor: currentSpread >= maxSpread ? "default" : "pointer",
-            fontSize: isMobile ? 20 : 15, letterSpacing: 2,
+            fontSize: isMobile ? 22 : 15, letterSpacing: 2,
             boxShadow: currentSpread >= maxSpread ? "none" : "0 2px 12px rgba(0,0,0,0.25)",
-            transition: "all 0.15s ease", minWidth: isMobile ? 60 : "auto",
+            transition: "all 0.15s ease",
+            display: "flex", alignItems: "center", justifyContent: "center",
           }}>{"→"}</button>
       </div>
 ﻿
