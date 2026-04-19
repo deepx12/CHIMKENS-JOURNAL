@@ -233,9 +233,12 @@ function Flipbook() {
   // Load saved data from localStorage
   const loadSaved = () => {
     try {
+      // First check localStorage (user's own edits take priority)
       const saved = localStorage.getItem("flipbook-data");
       if (saved) return JSON.parse(saved);
     } catch (e) {}
+    // Fall back to baked-in state (set at export time for Vercel)
+    if (typeof __BAKED__ !== "undefined") return __BAKED__;
     return null;
   };
   const savedData = useRef(loadSaved());
@@ -1508,6 +1511,40 @@ function Flipbook() {
             fontSize: isMobile ? 10 : 11, letterSpacing: 2,
             boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
           }}>{isMobile ? "+ IMG" : "+ ADD PAGES"}</button>}
+
+        {isEditMode && <button onClick={() => {
+          // Bake current state into HTML as default and download
+          const state = JSON.stringify({ pages, coverPage });
+          const marker = '/* __BAKED_STATE__ */';
+          const injection = `/* __BAKED_STATE__ */
+const __BAKED__ = ${state};`;
+          const currentHtml = document.documentElement.outerHTML;
+          // We need to inject via the source file — use a fetch of the current page
+          fetch(window.location.pathname)
+            .then(r => r.text())
+            .then(src => {
+              // Remove any previous baked state
+              src = src.replace(//* __BAKED_STATE__ */[sS]*?;
+/g, '');
+              // Inject new baked state right before function Flipbook
+              const baked = `/* __BAKED_STATE__ */
+const __BAKED__ = ${state};
+`;
+              src = src.replace('function Flipbook()', baked + 'function Flipbook()');
+              const blob = new Blob([src], { type: 'text/html' });
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = 'index.html';
+              a.click();
+            });
+        }} style={{
+          background: "rgba(20,80,20,0.88)", backdropFilter: "blur(8px)",
+          border: "1.5px solid rgba(40,140,40,0.3)",
+          color: "rgba(200,255,200,0.95)",
+          padding: isMobile ? "14px 16px" : "10px 22px", borderRadius: 8, cursor: "pointer",
+          fontSize: isMobile ? 10 : 11, letterSpacing: 2,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
+        }}>{isMobile ? "EXPORT" : "⬇ EXPORT"}</button>}
 ﻿
         <span style={{
           fontSize: isMobile ? 10 : 11, color: "rgba(40,28,14,0.55)", letterSpacing: 3,
