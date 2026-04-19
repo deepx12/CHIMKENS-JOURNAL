@@ -259,7 +259,7 @@ function Flipbook() {
   const [resizingImg, setResizingImg] = useState(null);
   const [rotatingImg, setRotatingImg] = useState(null);
   const [undoStack, setUndoStack] = useState([]);
-  const isEditMode = new URLSearchParams(window.location.search).has("edit");
+  const isEditMode = new URLSearchParams(window.location.search).get("edit") === "chimkens2025";
   const fileRef = useRef(null);
   const animRef = useRef(null);
   const dragStart = useRef({ x: 0, y: 0, origX: 0, origY: 0 });
