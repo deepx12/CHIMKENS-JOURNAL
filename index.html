@@ -6,7 +6,10 @@
 <title>Chimkens Journal</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body, #root { width: 100%; height: 100%; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  /* Lock body position on iOS Safari to prevent bounce/scroll */
+  body { position: fixed; width: 100%; }
+  #root { width: 100%; height: 100%; }
 
   /* ── LOADING SCREEN ────────────────────────────── */
   #loading-screen {
@@ -1091,14 +1094,14 @@ function Flipbook() {
     <div style={{
       width: "100%",
       height: isMobile ? ["100svh","100dvh","100vh"].find(u=>CSS.supports("height",u)) || "100vh" : "100vh",
-      position: "fixed", top: 0, left: 0,
       overflow: "hidden",
       display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center",
-      gap: isMobile ? 0 : 0,
       userSelect: "none",
       padding: isMobile ? "12px 10px 16px" : "40px 20px",
       touchAction: "none",
+      position: "relative",
+      zIndex: 1,
     }}
     onTouchStart={handleTouchStart}
     onTouchEnd={handleTouchEnd}
