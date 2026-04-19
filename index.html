@@ -238,7 +238,7 @@ function Flipbook() {
   //   ...
   //   last spread = back cover closed (single page)
 ﻿
-  const NUM_CONTENT_PAGES = 10; // 10 page sides (5 leaves worth)
+  const INITIAL_CONTENT_PAGES = 10; // initial empty pages (5 leaves worth)
 ﻿
   // Load saved data from localStorage, sanitizing legacy/malformed shapes
   const sanitizePage = (p) => {
@@ -271,7 +271,7 @@ function Flipbook() {
   const savedData = useRef(loadSaved());
 ﻿
   const [pages, setPages] = useState(
-    savedData.current?.pages || Array.from({ length: NUM_CONTENT_PAGES }, () => ({ images: [] }))
+    savedData.current?.pages || Array.from({ length: INITIAL_CONTENT_PAGES }, () => ({ images: [] }))
   );
   const [coverPage, setCoverPage] = useState(
     savedData.current?.coverPage || { images: [] }
@@ -308,7 +308,9 @@ function Flipbook() {
   }, [pages, coverPage]);
 ﻿
   // Number of spreads: cover + ceil(contentPages/2) + back
-  const numSpreads = 1 + Math.ceil(NUM_CONTENT_PAGES / 2) + 1;
+  // Book grows with the pages array — each spread holds 2 page sides,
+  // plus 1 spread for the cover and 1 for the back cover.
+  const numSpreads = 1 + Math.ceil(pages.length / 2) + 1;
   const maxSpread = numSpreads - 1;
 ﻿
   // Get content for a specific page number (1-indexed). 0 = cover, -1 = back cover
@@ -490,7 +492,14 @@ function Flipbook() {
           newPages[i] = { images: [newImg] };
           loaded++;
           if (loaded === files.length) {
-            setPages((prev) => [...prev, ...newPages.filter(Boolean)]);
+            setPages((prev) => {
+              const firstNewIdx = prev.length;
+              const updated = [...prev, ...newPages.filter(Boolean)];
+              // Jump to the spread holding the first newly added page
+              const targetSpread = Math.floor(firstNewIdx / 2) + 1;
+              setTimeout(() => setCurrentSpread(targetSpread), 50);
+              return updated;
+            });
           }
         };
         img.src = ev.target.result;
