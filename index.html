@@ -1002,8 +1002,10 @@ function Flipbook() {
       const mobile = window.innerWidth < 700;
       setIsMobile(mobile);
       if (mobile) {
-        const maxW = window.innerWidth * 0.94;
-        const maxH = window.innerHeight * 0.60;
+        const controlsH = 80; // buttons row
+        const paddingH = 32;  // top+bottom padding
+        const maxW = window.innerWidth * 0.96;
+        const maxH = (window.innerHeight - controlsH - paddingH) * 0.97;
         setViewScale(Math.min(maxW / PAGE_W, maxH / PAGE_H, 1));
       } else {
         const maxW = window.innerWidth * 0.85;
@@ -1080,11 +1082,13 @@ function Flipbook() {
 ﻿
   return (
     <div style={{
-      minHeight: "100vh", minHeight: "-webkit-fill-available",
+      height: isMobile ? "100dvh" : "100vh",
+      maxHeight: isMobile ? "100dvh" : "none",
       position: "relative", overflow: "hidden",
       display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center",
-      userSelect: "none", padding: isMobile ? "16px 12px" : "40px 20px",
+      alignItems: "center", justifyContent: isMobile ? "space-evenly" : "center",
+      userSelect: "none",
+      padding: isMobile ? "8px 8px 8px 8px" : "40px 20px",
       touchAction: "pan-y",
     }}
     onTouchStart={handleTouchStart}
@@ -1118,7 +1122,7 @@ function Flipbook() {
         justifyContent: leavingCover ? "flex-end" : (leavingBack || arrivingBack) ? "flex-start" : "center",
       }}>
         {/* Large diffused shadow — far below to sell floating height */}
-        <div style={{
+        {!isMobile && <div style={{
           position: "absolute",
           bottom: -60 + tilt.x * 8,
           left: leavingCover ? "auto" : "50%",
@@ -1481,7 +1485,7 @@ function Flipbook() {
 ﻿
       {/* Controls */}
       <div style={{
-        marginTop: isMobile ? 20 : 48,
+        marginTop: isMobile ? 0 : 48,
         display: "flex", alignItems: "center",
         gap: isMobile ? 12 : 18,
         fontFamily: "'Space Mono', monospace",
