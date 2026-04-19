@@ -240,15 +240,32 @@ function Flipbook() {
 ﻿
   const NUM_CONTENT_PAGES = 10; // 10 page sides (5 leaves worth)
 ﻿
-  // Load saved data from localStorage
+  // Load saved data from localStorage, sanitizing legacy/malformed shapes
+  const sanitizePage = (p) => {
+    if (!p || typeof p !== "object") return { images: [] };
+    // Legacy broken shape: { src, type:"image" } — migrate to proper image
+    if (p.src && !Array.isArray(p.images)) {
+      return { images: [{
+        src: p.src, x: 60, y: 80, w: 600, h: 740, rotation: 0,
+        id: Date.now() + Math.random(),
+      }] };
+    }
+    if (!Array.isArray(p.images)) return { images: [] };
+    return { images: p.images.filter(im => im && im.src) };
+  };
+  const sanitizeState = (s) => {
+    if (!s || typeof s !== "object") return null;
+    return {
+      pages: Array.isArray(s.pages) ? s.pages.map(sanitizePage) : [],
+      coverPage: sanitizePage(s.coverPage),
+    };
+  };
   const loadSaved = () => {
     try {
-      // First check localStorage (user's own edits take priority)
       const saved = localStorage.getItem("flipbook-data");
-      if (saved) return JSON.parse(saved);
+      if (saved) return sanitizeState(JSON.parse(saved));
     } catch (e) {}
-    // Fall back to baked-in state (set at export time for Vercel)
-    if (typeof __BAKED__ !== "undefined") return __BAKED__;
+    if (typeof __BAKED__ !== "undefined") return sanitizeState(__BAKED__);
     return null;
   };
   const savedData = useRef(loadSaved());
@@ -585,6 +602,33 @@ function Flipbook() {
       }
     };
     const handleMouseUp = () => {
+      // If an image was dragged past its page boundary within a spread,
+      // transfer it to the adjacent page (x adjusted) so it lives there.
+      if (draggingImg && draggingImg.pageIdx !== "cover") {
+        const srcIdx = draggingImg.pageIdx;
+        setPages(prev => {
+          if (!prev[srcIdx]) return prev;
+          const img = prev[srcIdx].images.find(im => im.id === draggingImg.imgId);
+          if (!img) return prev;
+          const centerX = img.x + img.w / 2;
+          // contentIdx even = left page of spread, odd = right page
+          const isLeftPage = srcIdx % 2 === 0;
+          let targetIdx = null;
+          let newX = img.x;
+          if (isLeftPage && centerX > PAGE_W && srcIdx + 1 < prev.length) {
+            targetIdx = srcIdx + 1;
+            newX = img.x - PAGE_W;
+          } else if (!isLeftPage && centerX < 0 && srcIdx - 1 >= 0) {
+            targetIdx = srcIdx - 1;
+            newX = img.x + PAGE_W;
+          }
+          if (targetIdx === null) return prev;
+          const next = [...prev];
+          next[srcIdx] = { ...next[srcIdx], images: next[srcIdx].images.filter(im => im.id !== draggingImg.imgId) };
+          next[targetIdx] = { ...next[targetIdx], images: [...next[targetIdx].images, { ...img, x: newX }] };
+          return next;
+        });
+      }
       setDraggingImg(null);
       setResizingImg(null);
       setRotatingImg(null);
@@ -833,7 +877,7 @@ function Flipbook() {
           style={{
             width: "100%", height: "100%", position: "relative",
             background: isDragOver ? "rgba(200,210,205,0.9)" : "#f5f4f0",
-            overflow: "hidden",
+            overflow: draggingImg && draggingImg.pageIdx === contentIdx ? "visible" : "hidden",
           }}
         >
           {content.images.map((img) => {
@@ -1539,6 +1583,20 @@ function Flipbook() {
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>{"←"}</button>
 ﻿
+        {isEditMode && <button onClick={() => {
+          if (confirm("Clear all local edits? This wipes your browser's cached pages and reloads from the published version.")) {
+            try { localStorage.removeItem("flipbook-data"); } catch(e) {}
+            window.location.reload();
+          }
+        }} style={{
+          background: "rgba(120,30,30,0.82)", backdropFilter: "blur(8px)",
+          border: "1.5px solid rgba(180,60,60,0.3)",
+          color: "rgba(255,220,220,0.9)",
+          padding: isMobile ? "14px 12px" : "10px 16px", borderRadius: 8, cursor: "pointer",
+          fontSize: isMobile ? 10 : 11, letterSpacing: 2,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
+        }}>RESET</button>}
+
         {isEditMode && <button onClick={() => fileRef.current.click()}
           style={{
             background: "rgba(20,14,8,0.82)", backdropFilter: "blur(8px)",
