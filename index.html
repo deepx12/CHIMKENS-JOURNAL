@@ -450,16 +450,33 @@ function Flipbook() {
 ﻿
   const handleFileUpload = useCallback((e) => {
     const files = Array.from(e.target.files);
+    if (files.length === 0) return;
     const newPages = [];
     let loaded = 0;
     files.forEach((file, i) => {
       const reader = new FileReader();
       reader.onload = (ev) => {
-        newPages[i] = { src: ev.target.result, type: "image" };
-        loaded++;
-        if (loaded === files.length) {
-          setPages((prev) => [...prev, ...newPages.filter(Boolean)]);
-        }
+        const img = new Image();
+        img.onload = () => {
+          const aspect = img.width / img.height;
+          const fitW = Math.min(600, PAGE_W - 100);
+          const fitH = fitW / aspect;
+          const newImg = {
+            src: ev.target.result,
+            x: (PAGE_W - fitW) / 2,
+            y: (PAGE_H - fitH) / 2,
+            w: fitW,
+            h: fitH,
+            rotation: 0,
+            id: Date.now() + Math.random() + i,
+          };
+          newPages[i] = { images: [newImg] };
+          loaded++;
+          if (loaded === files.length) {
+            setPages((prev) => [...prev, ...newPages.filter(Boolean)]);
+          }
+        };
+        img.src = ev.target.result;
       };
       reader.readAsDataURL(file);
     });
