@@ -1180,23 +1180,20 @@ function Flipbook() {
       gyroEnabled.current = true;
       let basis = null;
       const onOrient = (e) => {
-        // beta = front/back tilt (-180 to 180), gamma = left/right tilt (-90 to 90)
         if (e.beta === null || e.gamma === null) return;
-        // Use the first reading as the "rest" posture so we tilt relative to how the user is holding the phone.
         if (!basis) basis = { beta: e.beta, gamma: e.gamma };
         const dBeta = (e.beta - basis.beta);
         const dGamma = (e.gamma - basis.gamma);
-        const maxDeg = 8; // clamp
+        const maxDeg = 18; // larger tilt range
         const clamp = (v, m) => Math.max(-m, Math.min(m, v));
-        setGyro({
-          x: clamp(-dBeta * 0.35, maxDeg),
-          y: clamp(dGamma * 0.35, maxDeg),
-        });
+        gyroTargetRef.current = {
+          x: clamp(-dBeta * 0.7, maxDeg),
+          y: clamp(dGamma * 0.7, maxDeg),
+        };
       };
       window.addEventListener("deviceorientation", onOrient);
     };
     if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
-      // iOS — needs user-gesture permission request
       DeviceOrientationEvent.requestPermission().then((state) => {
         if (state === "granted") attach();
       }).catch(() => {});
@@ -1204,6 +1201,25 @@ function Flipbook() {
       attach();
     }
   }, []);
+
+  // rAF loop that smoothly lerps the gyro rotation directly onto the DOM
+  // without causing React re-renders (eliminates jitter with zoom/pan).
+  useEffect(() => {
+    if (!isMobile) return;
+    let raf;
+    const tick = () => {
+      const target = gyroTargetRef.current;
+      const cur = gyroCurrentRef.current;
+      cur.x += (target.x - cur.x) * 0.12;
+      cur.y += (target.y - cur.y) * 0.12;
+      if (gyroRef.current) {
+        gyroRef.current.style.transform = `rotateX(${cur.x.toFixed(2)}deg) rotateY(${cur.y.toFixed(2)}deg)`;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isMobile]);
   // Auto-enable on Android / non-iOS where no permission is needed.
   // On iOS, register a one-shot listener so the first tap triggers the permission prompt.
   useEffect(() => {
@@ -1263,8 +1279,10 @@ function Flipbook() {
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [zoomAnimating, setZoomAnimating] = useState(false);
   const [isTouching, setIsTouching] = useState(false); // disables CSS transition during active touch for jitter-free panning
-  // Device orientation tilt (gyro) — book leans with the phone
-  const [gyro, setGyro] = useState({ x: 0, y: 0 });
+  // Gyro uses direct DOM manipulation via refs so re-renders don't jitter the tilt.
+  const gyroRef = useRef(null);
+  const gyroTargetRef = useRef({ x: 0, y: 0 });
+  const gyroCurrentRef = useRef({ x: 0, y: 0 });
   const gyroEnabled = useRef(false);
 
   const setZoomSmooth = useCallback((nextZoom, nextPan) => {
@@ -1398,14 +1416,55 @@ function Flipbook() {
         zIndex: 0,
         pointerEvents: "none",
       }} />
+
+      {/* Scattered art objects on the board */}
+      <div style={{
+        position: "absolute", inset: 0,
+        zIndex: 1, pointerEvents: "none",
+        overflow: "hidden",
+      }}>
+        {[
+          { e: "📌", t: "6%",  l: "4%",  r: -18, s: 38 },
+          { e: "✏️", t: "82%", l: "7%",  r: 35,  s: 44 },
+          { e: "🖊️", t: "14%", l: "92%", r: 62,  s: 40 },
+          { e: "📎", t: "70%", l: "94%", r: -25, s: 34 },
+          { e: "📌", t: "88%", l: "52%", r: 12,  s: 36 },
+          { e: "🖍️", t: "4%",  l: "88%", r: -50, s: 42 },
+          { e: "📏", t: "48%", l: "2%",  r: 82,  s: 56 },
+          { e: "🖌️", t: "92%", l: "88%", r: -12, s: 40 },
+          { e: "✂️", t: "3%",  l: "48%", r: 22,  s: 36 },
+          { e: "📐", t: "52%", l: "96%", r: -68, s: 48 },
+          { e: "🎨", t: "78%", l: "3%",  r: 8,   s: 38 },
+          { e: "📌", t: "22%", l: "1%",  r: 45,  s: 32 },
+        ].map((a, i) => (
+          <span key={i} style={{
+            position: "absolute",
+            top: a.t, left: a.l,
+            fontSize: a.s,
+            transform: `rotate(${a.r}deg)`,
+            filter: "drop-shadow(2px 3px 4px rgba(0,0,0,0.35))",
+            opacity: 0.85,
+            userSelect: "none",
+          }}>{a.e}</span>
+        ))}
+      </div>
+
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Instrument+Serif&display=swap');
       `}</style>
-﻿
+
+      {/* Gyro tilt wrapper (mobile) — direct-DOM rAF driven */}
+      <div ref={gyroRef} style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        transformStyle: "preserve-3d",
+        willChange: "transform",
+        position: "relative",
+        zIndex: 10,
+      }}>
       {/* Outer wrapper for scaling + parallax tilt */}
       <div ref={bookRef} style={{
         transform: isMobile
-          ? `perspective(1400px) translate(${panOffset.x}px, ${panOffset.y}px) scale(${viewScale * userZoom}) rotateX(${flipping ? 0 : gyro.x}deg) rotateY(${flipping ? 0 : gyro.y}deg)`
+          ? `perspective(1400px) translate(${panOffset.x}px, ${panOffset.y}px) scale(${viewScale * userZoom})`
           : `perspective(1200px) scale(${viewScale}) rotateX(${flipping ? 0 : tilt.x}deg) rotateY(${flipping ? 0 : tilt.y}deg)`,
         transformOrigin: "center center",
         transition: (flipping || isTouching)
@@ -1781,7 +1840,8 @@ function Flipbook() {
           )}
         </div>
       </div>
-﻿
+      </div>
+
       {/* Controls — floating bar on mobile so the book can take full screen */}
       <div style={{
         marginTop: isMobile ? 0 : 48,
