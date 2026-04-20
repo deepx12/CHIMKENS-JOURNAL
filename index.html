@@ -1449,39 +1449,7 @@ function Flipbook() {
         pointerEvents: "none",
       }} />
 
-      {/* Scattered art objects on the board */}
-      <div style={{
-        position: "absolute", inset: 0,
-        zIndex: 1, pointerEvents: "none",
-        overflow: "hidden",
-      }}>
-        {[
-          { e: "📌", t: "6%",  l: "4%",  r: -18, s: 38 },
-          { e: "✏️", t: "82%", l: "7%",  r: 35,  s: 44 },
-          { e: "🖊️", t: "14%", l: "92%", r: 62,  s: 40 },
-          { e: "📎", t: "70%", l: "94%", r: -25, s: 34 },
-          { e: "📌", t: "88%", l: "52%", r: 12,  s: 36 },
-          { e: "🖍️", t: "4%",  l: "88%", r: -50, s: 42 },
-          { e: "📏", t: "48%", l: "2%",  r: 82,  s: 56 },
-          { e: "🖌️", t: "92%", l: "88%", r: -12, s: 40 },
-          { e: "✂️", t: "3%",  l: "48%", r: 22,  s: 36 },
-          { e: "📐", t: "52%", l: "96%", r: -68, s: 48 },
-          { e: "🎨", t: "78%", l: "3%",  r: 8,   s: 38 },
-          { e: "📌", t: "22%", l: "1%",  r: 45,  s: 32 },
-        ].map((a, i) => (
-          <span key={i} style={{
-            position: "absolute",
-            top: a.t, left: a.l,
-            fontSize: a.s,
-            transform: `rotate(${a.r}deg)`,
-            filter: "drop-shadow(2px 3px 4px rgba(0,0,0,0.35))",
-            opacity: 0.85,
-            userSelect: "none",
-          }}>{a.e}</span>
-        ))}
-      </div>
-
-      <style>{`
+<style>{`
         @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Instrument+Serif&display=swap');
       `}</style>
 
