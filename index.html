@@ -580,8 +580,8 @@ function Flipbook() {
   useEffect(() => {
     const handleKey = (e) => {
       if (e.key === "Escape") { setSelectedImg(null); return; }
-      // Undo with Ctrl+Z / Cmd+Z
-      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+      // Edit-only shortcuts (undo, delete) are gated behind isEditMode.
+      if (isEditMode && (e.ctrlKey || e.metaKey) && e.key === "z") {
         e.preventDefault();
         setUndoStack(prev => {
           if (prev.length === 0) return prev;
@@ -600,7 +600,7 @@ function Flipbook() {
         });
         return;
       }
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedImg) {
+      if (isEditMode && (e.key === "Delete" || e.key === "Backspace") && selectedImg) {
         e.preventDefault();
         const { pageIdx, imgId } = selectedImg;
         if (pageIdx === "cover") {
@@ -650,6 +650,7 @@ function Flipbook() {
 ﻿
   // Global mouse handlers for image drag/resize
   useEffect(() => {
+    if (!isEditMode) return; // visitors never attach edit handlers
     const handleMouseMove = (e) => {
       if (draggingImg) {
         const dx = e.clientX - dragStart.current.x;
@@ -725,7 +726,7 @@ function Flipbook() {
       window.removeEventListener("touchmove", handleTouchMove);
       window.removeEventListener("touchend", handleTouchUp);
     };
-  }, [draggingImg, resizingImg, rotatingImg, updateImage]);
+  }, [draggingImg, resizingImg, rotatingImg, updateImage, isEditMode]);
 ﻿
   const renderPage = (content, side) => {
     if (!content) return null;
@@ -841,13 +842,13 @@ function Flipbook() {
                 }}
               >
                 <div
-                  onMouseDown={(e) => {
+                  onMouseDown={!isEditMode ? undefined : (e) => {
                     e.stopPropagation();
                     setSelectedImg({ pageIdx: contentIdx, imgId: img.id });
                     setDraggingImg({ pageIdx: contentIdx, imgId: img.id });
                     dragStart.current = { x: e.clientX, y: e.clientY, origX: img.x, origY: img.y };
                   }}
-                  onTouchStart={(e) => {
+                  onTouchStart={!isEditMode ? undefined : (e) => {
                     e.stopPropagation();
                     setSelectedImg({ pageIdx: contentIdx, imgId: img.id });
                     setDraggingImg({ pageIdx: contentIdx, imgId: img.id });
@@ -865,7 +866,7 @@ function Flipbook() {
                     borderRadius: 2, pointerEvents: "none",
                   }} />
                 </div>
-                {isSelected && (
+                {isSelected && isEditMode && (
                   <div
                     onMouseDown={(e) => {
                       e.stopPropagation();
@@ -882,7 +883,7 @@ function Flipbook() {
                     }}
                   />
                 )}
-                {isSelected && [
+                {isSelected && isEditMode && [
                   { top: -22, left: -22, cursor: "grab" },
                   { top: -22, right: -22, cursor: "grab" },
                   { bottom: -22, left: -22, cursor: "grab" },
@@ -976,13 +977,13 @@ function Flipbook() {
               >
                 {/* Image itself — draggable */}
                 <div
-                  onMouseDown={(e) => {
+                  onMouseDown={!isEditMode ? undefined : (e) => {
                     e.stopPropagation();
                     setSelectedImg({ pageIdx: contentIdx, imgId: img.id });
                     setDraggingImg({ pageIdx: contentIdx, imgId: img.id });
                     dragStart.current = { x: e.clientX, y: e.clientY, origX: img.x, origY: img.y };
                   }}
-                  onTouchStart={(e) => {
+                  onTouchStart={!isEditMode ? undefined : (e) => {
                     e.stopPropagation();
                     setSelectedImg({ pageIdx: contentIdx, imgId: img.id });
                     setDraggingImg({ pageIdx: contentIdx, imgId: img.id });
