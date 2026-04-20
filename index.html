@@ -467,11 +467,14 @@ function Flipbook() {
     animRef.current = requestAnimationFrame(animate);
   }, [flipping, flipDir, currentSpread, maxSpread]);
 ﻿
+  // Where should uploaded images land? Capture the viewed spread at click time.
+  const uploadTargetRef = useRef(null);
   const handleFileUpload = useCallback((e) => {
     const files = Array.from(e.target.files);
     if (files.length === 0) return;
-    const newPages = [];
+    const target = uploadTargetRef.current; // snapshot from when user clicked +IMG
     let loaded = 0;
+    const built = [];
     files.forEach((file, i) => {
       const reader = new FileReader();
       reader.onload = (ev) => {
@@ -484,22 +487,37 @@ function Flipbook() {
             src: ev.target.result,
             x: (PAGE_W - fitW) / 2,
             y: (PAGE_H - fitH) / 2,
-            w: fitW,
-            h: fitH,
-            rotation: 0,
+            w: fitW, h: fitH, rotation: 0,
             id: Date.now() + Math.random() + i,
           };
-          newPages[i] = { images: [newImg] };
+          built[i] = newImg;
           loaded++;
           if (loaded === files.length) {
-            setPages((prev) => {
-              const firstNewIdx = prev.length;
-              const updated = [...prev, ...newPages.filter(Boolean)];
-              // Jump to the spread holding the first newly added page
-              const targetSpread = Math.floor(firstNewIdx / 2) + 1;
-              setTimeout(() => setCurrentSpread(targetSpread), 50);
-              return updated;
-            });
+            const imgs = built.filter(Boolean);
+            if (target && target.kind === "cover") {
+              setCoverPage(prev => ({ ...prev, images: [...prev.images, ...imgs] }));
+            } else if (target && target.kind === "page") {
+              // Add all images to the specific page the user was viewing
+              setPages(prev => {
+                const next = [...prev];
+                const pageIdx = target.pageIdx;
+                if (pageIdx < 0 || pageIdx >= next.length) return prev;
+                next[pageIdx] = {
+                  ...next[pageIdx],
+                  images: [...(next[pageIdx].images || []), ...imgs],
+                };
+                return next;
+              });
+            } else {
+              // Fallback: append as new pages at end
+              setPages(prev => {
+                const firstNewIdx = prev.length;
+                const updated = [...prev, ...imgs.map(im => ({ images: [im] }))];
+                const targetSpread = Math.floor(firstNewIdx / 2) + 1;
+                setTimeout(() => setCurrentSpread(targetSpread), 50);
+                return updated;
+              });
+            }
           }
         };
         img.src = ev.target.result;
@@ -507,7 +525,57 @@ function Flipbook() {
       reader.readAsDataURL(file);
     });
     e.target.value = "";
+    uploadTargetRef.current = null;
   }, []);
+
+  // Determine what the "+IMG" button should target based on the currently viewed spread.
+  // side = "left" | "right" | null — for spreads, picks which page to target. Null = cover/back.
+  const pickUploadTarget = (side) => {
+    if (currentSpread === 0) return { kind: "cover" };
+    if (currentSpread >= maxSpread) return { kind: "cover" }; // back cover — redirect to cover page
+    const leftIdx = (currentSpread - 1) * 2;
+    const rightIdx = leftIdx + 1;
+    if (side === "right" && rightIdx < pages.length) return { kind: "page", pageIdx: rightIdx };
+    return { kind: "page", pageIdx: leftIdx };
+  };
+
+  // Stretch the selected image across both pages of its spread as one photo.
+  const spanSelectedImage = useCallback(() => {
+    if (!selectedImg || selectedImg.pageIdx === "cover") return;
+    const srcIdx = selectedImg.pageIdx;
+    setPages(prev => {
+      if (!prev[srcIdx]) return prev;
+      const img = prev[srcIdx].images.find(im => im.id === selectedImg.imgId);
+      if (!img) return prev;
+      const isLeftPage = srcIdx % 2 === 0;
+      const targetIdx = isLeftPage ? srcIdx + 1 : srcIdx - 1;
+      if (targetIdx < 0 || targetIdx >= prev.length) return prev;
+      const spanW = PAGE_W * 2;
+      const aspect = img.w / img.h;
+      const spanH = spanW / aspect;
+      const spanY = Math.max(0, (PAGE_H - spanH) / 2);
+      // Source page shows its half at x=0 (left) or x=-PAGE_W (right).
+      const srcX = isLeftPage ? 0 : -PAGE_W;
+      const companionX = isLeftPage ? -PAGE_W : 0;
+      const companionImg = {
+        ...img,
+        x: companionX, y: spanY, w: spanW, h: spanH, rotation: 0,
+        id: Date.now() + Math.random(),
+      };
+      const next = [...prev];
+      next[srcIdx] = {
+        ...next[srcIdx],
+        images: next[srcIdx].images.map(im =>
+          im.id === img.id ? { ...im, x: srcX, y: spanY, w: spanW, h: spanH, rotation: 0 } : im
+        ),
+      };
+      next[targetIdx] = {
+        ...next[targetIdx],
+        images: [...next[targetIdx].images, companionImg],
+      };
+      return next;
+    });
+  }, [selectedImg]);
 ﻿
   useEffect(() => {
     const handleKey = (e) => {
@@ -1608,7 +1676,18 @@ function Flipbook() {
           boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
         }}>RESET</button>}
 
-        {isEditMode && <button onClick={() => fileRef.current.click()}
+        {isEditMode && <button onClick={() => {
+          // Target the page the user is looking at. If an image is already selected,
+          // drop into the same page as the selection; otherwise pick the left page of the spread.
+          if (selectedImg) {
+            uploadTargetRef.current = selectedImg.pageIdx === "cover"
+              ? { kind: "cover" }
+              : { kind: "page", pageIdx: selectedImg.pageIdx };
+          } else {
+            uploadTargetRef.current = pickUploadTarget("left");
+          }
+          fileRef.current.click();
+        }}
           style={{
             background: "rgba(20,14,8,0.82)", backdropFilter: "blur(8px)",
             border: "1.5px solid rgba(40,28,14,0.2)",
@@ -1616,7 +1695,18 @@ function Flipbook() {
             padding: isMobile ? "14px 16px" : "10px 22px", borderRadius: 8, cursor: "pointer",
             fontSize: isMobile ? 10 : 11, letterSpacing: 2,
             boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
-          }}>{isMobile ? "+ IMG" : "+ ADD PAGES"}</button>}
+          }}>{isMobile ? "+ IMG" : "+ IMG TO PAGE"}</button>}
+
+        {isEditMode && selectedImg && selectedImg.pageIdx !== "cover" && (
+          <button onClick={spanSelectedImage} style={{
+            background: "rgba(20,60,80,0.88)", backdropFilter: "blur(8px)",
+            border: "1.5px solid rgba(40,120,160,0.3)",
+            color: "rgba(200,240,255,0.95)",
+            padding: isMobile ? "14px 16px" : "10px 22px", borderRadius: 8, cursor: "pointer",
+            fontSize: isMobile ? 10 : 11, letterSpacing: 2,
+            boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
+          }}>SPAN</button>
+        )}
 
         {isEditMode && <button onClick={async () => {
           const pwd = prompt("Admin password:");
