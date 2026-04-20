@@ -565,6 +565,20 @@ function Flipbook() {
             const imgs = built.filter(Boolean);
             if (target && target.kind === "cover") {
               setCoverPage(prev => ({ ...prev, images: [...prev.images, ...imgs] }));
+            } else if (target && target.kind === "append") {
+              // User was on the back cover and uploaded — create a new
+              // empty spread, drop all images on its left page (extra
+              // images spill onto the right), then jump to that spread.
+              setPages(prev => {
+                const newLeftIdx = prev.length;
+                const leftPage = { images: [imgs[0]].filter(Boolean) };
+                const rightImgs = imgs.slice(1);
+                const rightPage = { images: rightImgs };
+                const updated = [...prev, leftPage, rightPage];
+                const targetSpread = Math.floor(newLeftIdx / 2) + 1;
+                setTimeout(() => setCurrentSpread(targetSpread), 50);
+                return updated;
+              });
             } else if (target && target.kind === "page") {
               // Add all images to the specific page the user was viewing
               setPages(prev => {
@@ -601,7 +615,10 @@ function Flipbook() {
   // side = "left" | "right" | null — for spreads, picks which page to target. Null = cover/back.
   const pickUploadTarget = (side) => {
     if (currentSpread === 0) return { kind: "cover" };
-    if (currentSpread >= maxSpread) return { kind: "cover" }; // back cover — redirect to cover page
+    // Back cover: user wants a fresh spread. Signal "append" so the
+    // uploader creates a new empty spread before the back cover and
+    // navigates there automatically.
+    if (currentSpread >= maxSpread) return { kind: "append" };
     const leftIdx = (currentSpread - 1) * 2;
     const rightIdx = leftIdx + 1;
     if (side === "right" && rightIdx < pages.length) return { kind: "page", pageIdx: rightIdx };
