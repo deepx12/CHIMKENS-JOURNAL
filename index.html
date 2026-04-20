@@ -485,8 +485,27 @@ function Flipbook() {
           const aspect = img.width / img.height;
           const fitW = Math.min(600, PAGE_W - 100);
           const fitH = fitW / aspect;
+          // Compress: downscale to max 1600px on long edge + JPEG at 0.82
+          // so base64 payload stays well under Vercel's 4.5MB request limit.
+          const MAX = 1600;
+          const longEdge = Math.max(img.width, img.height);
+          const scale = longEdge > MAX ? MAX / longEdge : 1;
+          const cw = Math.round(img.width * scale);
+          const ch = Math.round(img.height * scale);
+          const canvas = document.createElement("canvas");
+          canvas.width = cw; canvas.height = ch;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, cw, ch);
+          let compressed;
+          try {
+            compressed = canvas.toDataURL("image/jpeg", 0.82);
+            // If JPEG somehow ended up bigger (rare), keep original
+            if (compressed.length > ev.target.result.length) compressed = ev.target.result;
+          } catch (err) {
+            compressed = ev.target.result;
+          }
           const newImg = {
-            src: ev.target.result,
+            src: compressed,
             x: (PAGE_W - fitW) / 2,
             y: (PAGE_H - fitH) / 2,
             w: fitW, h: fitH, rotation: 0,
@@ -1453,13 +1472,12 @@ function Flipbook() {
         @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Instrument+Serif&display=swap');
       `}</style>
 
-      {/* Gyro tilt wrapper (mobile) — direct-DOM rAF driven */}
+      {/* Gyro tilt wrapper (mobile only) — direct-DOM rAF driven */}
       <div ref={gyroRef} style={{
         display: "flex", alignItems: "center", justifyContent: "center",
-        transformStyle: "preserve-3d",
-        willChange: "transform",
         position: "relative",
         zIndex: 10,
+        ...(isMobile ? { willChange: "transform", transformStyle: "preserve-3d" } : null),
       }}>
       {/* Outer wrapper for scaling + parallax tilt */}
       <div ref={bookRef} style={{
@@ -1924,12 +1942,30 @@ function Flipbook() {
           btn.textContent = "Publishing…";
           btn.disabled = true;
           try {
+            const body = JSON.stringify({ password: pwd, state: { pages, coverPage } });
+            // Vercel serverless functions cap request bodies around 4.5MB.
+            // Warn early so the user can shrink before waiting for a 413.
+            const mb = body.length / (1024 * 1024);
+            if (mb > 4.2) {
+              alert("Payload too large: " + mb.toFixed(2) + "MB (limit ~4.5MB).\nRe-upload your biggest images — the app auto-compresses on upload, so replacing older uncompressed images should fix this.");
+              btn.textContent = isMobile ? "PUBLISH" : "⬆ PUBLISH";
+              btn.disabled = false;
+              return;
+            }
             const res = await fetch("/api/publish", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ password: pwd, state: { pages, coverPage } }),
+              body,
             });
-            const json = await res.json();
+            const text = await res.text();
+            let json;
+            try { json = JSON.parse(text); }
+            catch {
+              alert("Server error (" + res.status + "): " + text.slice(0, 200));
+              btn.textContent = isMobile ? "PUBLISH" : "⬆ PUBLISH";
+              btn.disabled = false;
+              return;
+            }
             if (json.ok) alert("✓ " + json.message);
             else alert("Error: " + json.error);
           } catch(e) { alert("Network error: " + e.message); }
