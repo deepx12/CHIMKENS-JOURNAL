@@ -305,6 +305,41 @@ function Flipbook() {
   const resizeStart = useRef({ x: 0, y: 0, origW: 0, origH: 0 });
   const rotateStart = useRef({ angle: 0, origRotation: 0, centerX: 0, centerY: 0 });
 ﻿
+  // Live-update: poll /api/version every 60s and soft-reload when a new
+  // publish lands. Admins in edit mode are skipped so their unsaved work
+  // isn't blown away mid-edit.
+  useEffect(() => {
+    if (isEditMode) return;
+    const myVersion = (typeof __BAKED_VERSION__ !== "undefined") ? __BAKED_VERSION__ : 0;
+    let stopped = false;
+    const check = async () => {
+      try {
+        const r = await fetch("/api/version", { cache: "no-store" });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!stopped && j.version && j.version > myVersion) {
+          // New publish detected — drop stale cache and reload
+          try { localStorage.removeItem("flipbook-data"); } catch (e) {}
+          try { localStorage.setItem("flipbook-version", String(j.version)); } catch (e) {}
+          window.location.reload();
+        }
+      } catch (e) {}
+    };
+    // First check 15s after load, then every 60s
+    const first = setTimeout(check, 15000);
+    const iv = setInterval(check, 60000);
+    // Also check when the tab regains focus
+    const onFocus = () => check();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      stopped = true;
+      clearTimeout(first); clearInterval(iv);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, []);
+
   // Auto-save to localStorage when pages or cover change
   const saveTimer = useRef(null);
   useEffect(() => {
