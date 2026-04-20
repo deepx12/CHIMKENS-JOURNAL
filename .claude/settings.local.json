@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ':*)",
+      "Bash(node -e ':*)",
+      "Bash(node)",
+      "Bash(start \"\" \"C:\\\\Users\\\\deepa\\\\chimkenss jornal\\\\index.html\")",
+      "Bash(npx serve:*)",
+      "mcp__Claude_Preview__preview_start",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(dir /B /O-D \"C:\\\\Users\\\\deepa\\\\AppData\\\\Local\\\\Temp\")",
+      "Bash(findstr /I \"\\\\.png \\\\.jpg \\\\.jpeg\")",
+      "Bash(powershell -NoProfile -Command 'Get-ChildItem -Path \"C:\\\\Users\\\\deepa\\\\AppData\\\\Local\\\\Temp\" -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in \".png\",\".jpg\",\".jpeg\" } | Sort-Object LastWriteTime -Descending | Select-Object -First 15 Name, LastWriteTime, Length | Format-Table -AutoSize')",
+      "Bash(powershell -NoProfile -Command 'Get-ChildItem -Path \"C:\\\\Users\\\\deepa\\\\.claude\" -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in \".png\",\".jpg\",\".jpeg\" } | Sort-Object LastWriteTime -Descending | Select-Object -First 10 FullName, LastWriteTime, Length | Format-Table -AutoSize')",
+      "Bash(powershell -NoProfile -Command '$locs = @\\(\"C:\\\\Users\\\\deepa\\\\AppData\\\\Roaming\\\\Claude\",\"C:\\\\Users\\\\deepa\\\\AppData\\\\Local\\\\Claude\",\"C:\\\\Users\\\\deepa\\\\AppData\\\\Local\\\\AnthropicClaude\",\"C:\\\\Users\\\\deepa\\\\AppData\\\\Roaming\\\\AnthropicClaude\",\"C:\\\\Users\\\\deepa\\\\Pictures\\\\Screenshots\",\"C:\\\\Users\\\\deepa\\\\Downloads\"\\); foreach \\($l in $locs\\) { if \\(Test-Path $l\\) { Get-ChildItem -Path $l -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in \".png\",\".jpg\",\".jpeg\" -and $_.LastWriteTime -gt \\(Get-Date\\).AddHours\\(-2\\) } | Select-Object FullName, LastWriteTime, Length } }')",
+      "Bash(powershell -NoProfile -Command 'Get-ChildItem -Path \"C:\\\\Users\\\\deepa\" -Recurse -File -ErrorAction SilentlyContinue -Depth 4 | Where-Object { \\($_.Extension -in \".png\",\".jpg\",\".jpeg\"\\) -and $_.LastWriteTime -gt \\(Get-Date\\).AddMinutes\\(-30\\) -and $_.Length -gt 50000 } | Select-Object FullName, LastWriteTime, Length | Format-Table -AutoSize')",
+      "Bash(powershell -NoProfile -Command 'Get-ChildItem -Path \"C:\\\\Users\\\\deepa\" -Recurse -File -ErrorAction SilentlyContinue -Depth 3 2>$null | Where-Object { \\($_.Extension -eq \".png\" -or $_.Extension -eq \".jpg\"\\) -and $_.LastWriteTime -gt \\(Get-Date\\).AddHours\\(-3\\) -and $_.Length -gt 100000 } | Select-Object FullName, Length, LastWriteTime | Format-Table -AutoSize')",
+      "Bash(powershell -NoProfile -Command 'Get-Item \"back_cover.jpg\" | Select-Object Name, Length, LastWriteTime | Format-List')",
+      "Bash(awk 'NR>=1424 {print NR\": \"$0}' \"C:\\\\Users\\\\deepa\\\\chimkenss jornal\\\\index.html\")",
+      "Bash(awk 'NR>=1460 && NR<=1900' \"C:\\\\Users\\\\deepa\\\\chimkenss jornal\\\\index.html\")",
+      "Bash(grep -n \"^\\\\s*</div>\\\\|^\\\\s*\\)}$\\\\|Mobile controls\\\\|Controls bar\\\\|{/\\\\*\")"
+    ]
+  }
+}

@@ -260,6 +260,19 @@ function Flipbook() {
     };
   };
   const loadSaved = () => {
+    // Version-aware loader: if the baked HTML carries a newer version
+    // than what this device last saw, drop the local cache so visitors
+    // automatically pick up freshly-published content on any device.
+    const bakedVersion = (typeof __BAKED_VERSION__ !== "undefined") ? __BAKED_VERSION__ : 0;
+    let lastSeen = 0;
+    try { lastSeen = parseInt(localStorage.getItem("flipbook-version") || "0", 10) || 0; } catch (e) {}
+    if (bakedVersion > lastSeen) {
+      try {
+        localStorage.removeItem("flipbook-data");
+        localStorage.setItem("flipbook-version", String(bakedVersion));
+      } catch (e) {}
+      if (typeof __BAKED__ !== "undefined") return sanitizeState(__BAKED__);
+    }
     try {
       const saved = localStorage.getItem("flipbook-data");
       if (saved) return sanitizeState(JSON.parse(saved));

@@ -38,14 +38,21 @@ export default async function handler(req, res) {
     // 2. Decode current content
     const currentContent = Buffer.from(getJson.content, "base64").toString("utf8");
 
-    // 3. Bake new state into the HTML
-    // Remove any previous baked state
+    // 3. Bake new state into the HTML with a version timestamp so
+    // visitor devices can detect a new publish and drop their stale
+    // localStorage cache automatically (no manual RESET needed).
+    const version = Date.now();
+    const stateWithVersion = { ...state, __version: version };
+    // Remove any previous baked state / version
     let newContent = currentContent.replace(
-      /\/\* __BAKED_STATE__ \*\/[\s\S]*?;\n/g,
+      /\/\* __BAKED_STATE__ \*\/[\s\S]*?;\n(const __BAKED_VERSION__ = \d+;\n)?/g,
       ""
     );
-    // Inject new baked state before function Flipbook()
-    const baked = `/* __BAKED_STATE__ */\nconst __BAKED__ = ${JSON.stringify(state)};\n`;
+    // Inject new baked state + version before function Flipbook()
+    const baked =
+      `/* __BAKED_STATE__ */\n` +
+      `const __BAKED__ = ${JSON.stringify(stateWithVersion)};\n` +
+      `const __BAKED_VERSION__ = ${version};\n`;
     newContent = newContent.replace("function Flipbook()", baked + "function Flipbook()");
 
     // 4. Push updated file to GitHub
