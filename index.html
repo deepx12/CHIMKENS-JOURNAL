@@ -1172,6 +1172,62 @@ function Flipbook() {
     return () => window.removeEventListener("resize", calcScale);
   }, []);
 ﻿
+  // Device orientation (gyro) tilt for mobile — book leans with the phone.
+  // iOS 13+ Safari requires a user gesture to request permission.
+  const attachGyro = useCallback(() => {
+    if (gyroEnabled.current) return;
+    const attach = () => {
+      gyroEnabled.current = true;
+      let basis = null;
+      const onOrient = (e) => {
+        // beta = front/back tilt (-180 to 180), gamma = left/right tilt (-90 to 90)
+        if (e.beta === null || e.gamma === null) return;
+        // Use the first reading as the "rest" posture so we tilt relative to how the user is holding the phone.
+        if (!basis) basis = { beta: e.beta, gamma: e.gamma };
+        const dBeta = (e.beta - basis.beta);
+        const dGamma = (e.gamma - basis.gamma);
+        const maxDeg = 8; // clamp
+        const clamp = (v, m) => Math.max(-m, Math.min(m, v));
+        setGyro({
+          x: clamp(-dBeta * 0.35, maxDeg),
+          y: clamp(dGamma * 0.35, maxDeg),
+        });
+      };
+      window.addEventListener("deviceorientation", onOrient);
+    };
+    if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+      // iOS — needs user-gesture permission request
+      DeviceOrientationEvent.requestPermission().then((state) => {
+        if (state === "granted") attach();
+      }).catch(() => {});
+    } else {
+      attach();
+    }
+  }, []);
+  // Auto-enable on Android / non-iOS where no permission is needed.
+  // On iOS, register a one-shot listener so the first tap triggers the permission prompt.
+  useEffect(() => {
+    if (!isMobile) return;
+    const needsPermission =
+      typeof DeviceOrientationEvent !== "undefined" &&
+      typeof DeviceOrientationEvent.requestPermission === "function";
+    if (!needsPermission) {
+      attachGyro();
+      return;
+    }
+    const onFirstTouch = () => {
+      attachGyro();
+      window.removeEventListener("touchend", onFirstTouch);
+      window.removeEventListener("click", onFirstTouch);
+    };
+    window.addEventListener("touchend", onFirstTouch, { once: true });
+    window.addEventListener("click", onFirstTouch, { once: true });
+    return () => {
+      window.removeEventListener("touchend", onFirstTouch);
+      window.removeEventListener("click", onFirstTouch);
+    };
+  }, [isMobile, attachGyro]);
+
   // Parallax tilt: track mouse relative to viewport center
   useEffect(() => {
     let rafId;
@@ -1206,6 +1262,10 @@ function Flipbook() {
   const [userZoom, setUserZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [zoomAnimating, setZoomAnimating] = useState(false);
+  const [isTouching, setIsTouching] = useState(false); // disables CSS transition during active touch for jitter-free panning
+  // Device orientation tilt (gyro) — book leans with the phone
+  const [gyro, setGyro] = useState({ x: 0, y: 0 });
+  const gyroEnabled = useRef(false);
 
   const setZoomSmooth = useCallback((nextZoom, nextPan) => {
     setZoomAnimating(true);
@@ -1226,6 +1286,7 @@ function Flipbook() {
       };
       swipeStart.current = null;
       panStart.current = null;
+      setIsTouching(true);
       return;
     }
     if (e.touches.length === 1) {
@@ -1243,6 +1304,7 @@ function Flipbook() {
           x: e.touches[0].clientX, y: e.touches[0].clientY,
           origX: panOffset.x, origY: panOffset.y,
         };
+        setIsTouching(true);
       } else {
         // Normal swipe-to-flip
         swipeStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: now };
@@ -1272,6 +1334,7 @@ function Flipbook() {
   }, [userZoom]);
 
   const handleTouchEnd = useCallback((e) => {
+    setIsTouching(false);
     // End pinch/pan
     if (pinchStart.current || panStart.current) {
       pinchStart.current = null;
@@ -1342,10 +1405,10 @@ function Flipbook() {
       {/* Outer wrapper for scaling + parallax tilt */}
       <div ref={bookRef} style={{
         transform: isMobile
-          ? `translate(${panOffset.x}px, ${panOffset.y}px) scale(${viewScale * userZoom})`
+          ? `perspective(1400px) translate(${panOffset.x}px, ${panOffset.y}px) scale(${viewScale * userZoom}) rotateX(${flipping ? 0 : gyro.x}deg) rotateY(${flipping ? 0 : gyro.y}deg)`
           : `perspective(1200px) scale(${viewScale}) rotateX(${flipping ? 0 : tilt.x}deg) rotateY(${flipping ? 0 : tilt.y}deg)`,
         transformOrigin: "center center",
-        transition: flipping
+        transition: (flipping || isTouching)
           ? "none"
           : zoomAnimating
             ? "transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), width 0.3s cubic-bezier(0.25, 0.1, 0.25, 1)"
