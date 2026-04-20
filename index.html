@@ -1152,12 +1152,12 @@ function Flipbook() {
       const mobile = window.innerWidth < 700;
       setIsMobile(mobile);
       if (mobile) {
-        // Immersive: fill the entire viewport width, leave only room for
-        // the controls row at the bottom.
+        // Fit the full spread (both pages) with a tiny side margin,
+        // leaving room for the controls row at the bottom.
         const controlsH = 72;
-        const maxW = window.innerWidth;
+        const maxW = window.innerWidth * 0.96;
         const maxH = window.innerHeight - controlsH;
-        setViewScale(Math.min(maxW / PAGE_W, maxH / PAGE_H, 1));
+        setViewScale(Math.min(maxW / spreadWidth, maxH / PAGE_H, 1));
       } else {
         const maxW = window.innerWidth * 0.85;
         const maxH = window.innerHeight * 0.72;
@@ -1212,12 +1212,11 @@ function Flipbook() {
     else flipTo("prev");
   }, [flipTo]);
 
-  // Width: single page for cover/back states, double for spreads
-  // On mobile: always single page
+  // Width: single page for cover/back states, double for spreads.
+  // Same logic on mobile and desktop — mobile just scales down so the
+  // full spread fits on screen.
   let visibleWidth;
-  if (isMobile) {
-    visibleWidth = PAGE_W;
-  } else if (leavingCover || leavingBack || arrivingCover || arrivingBack) {
+  if (leavingCover || leavingBack || arrivingCover || arrivingBack) {
     visibleWidth = PAGE_W;
   } else if ((isOnCover || isOnBack) && !flipping) {
     visibleWidth = PAGE_W;
