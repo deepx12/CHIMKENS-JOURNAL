@@ -1152,10 +1152,11 @@ function Flipbook() {
       const mobile = window.innerWidth < 700;
       setIsMobile(mobile);
       if (mobile) {
-        const controlsH = 90;
-        const safeArea = 40;
-        const maxW = window.innerWidth * 0.95;
-        const maxH = window.innerHeight - controlsH - safeArea;
+        // Immersive: fill the entire viewport width, leave only room for
+        // the controls row at the bottom.
+        const controlsH = 72;
+        const maxW = window.innerWidth;
+        const maxH = window.innerHeight - controlsH;
         setViewScale(Math.min(maxW / PAGE_W, maxH / PAGE_H, 1));
       } else {
         const maxW = window.innerWidth * 0.85;
@@ -1238,7 +1239,7 @@ function Flipbook() {
       display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center",
       userSelect: "none",
-      padding: isMobile ? "12px 10px 16px" : "40px 20px",
+      padding: isMobile ? "0" : "40px 20px",
       touchAction: "none",
       position: "relative",
       zIndex: 1,
@@ -1637,13 +1638,17 @@ function Flipbook() {
         </div>
       </div>
 ﻿
-      {/* Controls */}
+      {/* Controls — floating bar on mobile so the book can take full screen */}
       <div style={{
-        marginTop: isMobile ? 16 : 48,
+        marginTop: isMobile ? 0 : 48,
         display: "flex", alignItems: "center",
         gap: isMobile ? 10 : 18,
         fontFamily: "'Space Mono', monospace",
-        zIndex: 10, position: "relative",
+        zIndex: 10,
+        position: isMobile ? "absolute" : "relative",
+        bottom: isMobile ? "max(16px, env(safe-area-inset-bottom, 0))" : "auto",
+        left: isMobile ? 0 : "auto",
+        right: isMobile ? 0 : "auto",
         width: isMobile ? "100%" : "auto",
         justifyContent: "center",
         flexShrink: 0,
