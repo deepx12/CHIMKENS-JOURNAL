@@ -177,20 +177,19 @@
   }
 
   /* ── MOBILE ───────────────────────────────────── */
+  /* Mobile keeps the same decorative elements as desktop (tape, page edge).
+     Only the sizes shrink a bit so the book fits a phone screen. */
   @media (max-width: 700px) {
     #loading-screen {
       padding: 20px 16px;
       justify-content: center;
       gap: 0;
     }
-    #loader-book-wrap { margin-bottom: 28px; }
-    #loader-cover { width: 150px !important; height: 195px !important; }
-    #loader-title { font-size: 20px !important; letter-spacing: 0.14em !important; }
-    #loader-sub { font-size: 10px; margin-top: 8px; }
-    #loader-dots { margin-top: 24px; }
-    .tape.tape-h { display: none; }
-    .tape.tape-v { display: none; }
-    .page-edge { display: none; }
+    #loader-book-wrap { margin-bottom: 40px; }
+    #loader-cover { width: 190px !important; height: 250px !important; }
+    #loader-title { font-size: 24px !important; letter-spacing: 0.18em !important; }
+    #loader-sub { font-size: 11px; margin-top: 10px; }
+    #loader-dots { margin-top: 36px; }
   }
 </style>
 </head>
