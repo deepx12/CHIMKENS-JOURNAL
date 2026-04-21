@@ -740,7 +740,29 @@ function Flipbook() {
       return next;
     });
   }, [selectedImg]);
-﻿
+
+  // Delete the currently selected image. Shared by keyboard (Del/Backspace)
+  // and the mobile DELETE button so behavior stays consistent.
+  const deleteSelected = useCallback(() => {
+    if (!selectedImg) return;
+    const { pageIdx, imgId } = selectedImg;
+    if (pageIdx === "cover") {
+      const deletedImg = coverPage.images.find(im => im.id === imgId);
+      if (deletedImg) setUndoStack(prev => [...prev, { target: "cover", image: deletedImg }]);
+      setCoverPage(prev => ({ ...prev, images: prev.images.filter(im => im.id !== imgId) }));
+    } else {
+      const deletedImg = pages[pageIdx]?.images.find(im => im.id === imgId);
+      if (deletedImg) setUndoStack(prev => [...prev, { target: "page", pageIdx, image: deletedImg }]);
+      setPages(prev => {
+        const next = [...prev];
+        if (!next[pageIdx]) return prev;
+        next[pageIdx] = { ...next[pageIdx], images: next[pageIdx].images.filter(im => im.id !== imgId) };
+        return next;
+      });
+    }
+    setSelectedImg(null);
+  }, [selectedImg, pages, coverPage]);
+
   useEffect(() => {
     const handleKey = (e) => {
       if (e.key === "Escape") { setSelectedImg(null); return; }
@@ -766,22 +788,7 @@ function Flipbook() {
       }
       if (isEditMode && (e.key === "Delete" || e.key === "Backspace") && selectedImg) {
         e.preventDefault();
-        const { pageIdx, imgId } = selectedImg;
-        if (pageIdx === "cover") {
-          const deletedImg = coverPage.images.find(im => im.id === imgId);
-          if (deletedImg) setUndoStack(prev => [...prev, { target: "cover", image: deletedImg }]);
-          setCoverPage(prev => ({ ...prev, images: prev.images.filter(im => im.id !== imgId) }));
-        } else {
-          const deletedImg = pages[pageIdx]?.images.find(im => im.id === imgId);
-          if (deletedImg) setUndoStack(prev => [...prev, { target: "page", pageIdx, image: deletedImg }]);
-          setPages(prev => {
-            const next = [...prev];
-            const page = { ...next[pageIdx], images: next[pageIdx].images.filter(im => im.id !== imgId) };
-            next[pageIdx] = page;
-            return next;
-          });
-        }
-        setSelectedImg(null);
+        deleteSelected();
         return;
       }
       if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); flipTo("next"); }
@@ -1347,16 +1354,24 @@ function Flipbook() {
     const attach = () => {
       gyroEnabled.current = true;
       let basis = null;
+      // Low-pass filter on the raw sensor so small hand tremors don't
+      // reach the target — raw sensor values can oscillate ±1° which
+      // reads as "jitter" even with frame-rate smoothing downstream.
+      let smoothBeta = null, smoothGamma = null;
       const onOrient = (e) => {
         if (e.beta === null || e.gamma === null) return;
-        if (!basis) basis = { beta: e.beta, gamma: e.gamma };
-        const dBeta = (e.beta - basis.beta);
-        const dGamma = (e.gamma - basis.gamma);
-        const maxDeg = 18; // larger tilt range
+        if (smoothBeta === null) { smoothBeta = e.beta; smoothGamma = e.gamma; }
+        // 0.15 = heavy smoothing. 1 = no smoothing (jumpy).
+        smoothBeta += (e.beta - smoothBeta) * 0.15;
+        smoothGamma += (e.gamma - smoothGamma) * 0.15;
+        if (!basis) basis = { beta: smoothBeta, gamma: smoothGamma };
+        const dBeta = smoothBeta - basis.beta;
+        const dGamma = smoothGamma - basis.gamma;
+        const maxDeg = 20;
         const clamp = (v, m) => Math.max(-m, Math.min(m, v));
         gyroTargetRef.current = {
-          x: clamp(-dBeta * 0.7, maxDeg),
-          y: clamp(dGamma * 0.7, maxDeg),
+          x: clamp(-dBeta * 0.75, maxDeg),
+          y: clamp(dGamma * 0.75, maxDeg),
         };
       };
       window.addEventListener("deviceorientation", onOrient);
@@ -1378,9 +1393,15 @@ function Flipbook() {
     const tick = () => {
       const target = gyroTargetRef.current;
       const cur = gyroCurrentRef.current;
-      cur.x += (target.x - cur.x) * 0.12;
-      cur.y += (target.y - cur.y) * 0.12;
-      if (gyroRef.current) {
+      // 0.07 = much gentler chase, ~300ms settle. Combined with the
+      // sensor-level low-pass in attachGyro, feels buttery smooth.
+      cur.x += (target.x - cur.x) * 0.07;
+      cur.y += (target.y - cur.y) * 0.07;
+      // Skip DOM writes when movement is negligible to let the browser
+      // composite efficiently.
+      const dx = Math.abs(target.x - cur.x);
+      const dy = Math.abs(target.y - cur.y);
+      if (gyroRef.current && (dx > 0.02 || dy > 0.02)) {
         gyroRef.current.style.transform = `rotateX(${cur.x.toFixed(2)}deg) rotateY(${cur.y.toFixed(2)}deg)`;
       }
       raf = requestAnimationFrame(tick);
@@ -1614,20 +1635,28 @@ function Flipbook() {
         display: "flex",
         justifyContent: leavingCover ? "flex-end" : (leavingBack || arrivingBack) ? "flex-start" : "center",
       }}>
-        {/* Large diffused shadow — far below to sell floating height */}
-        {!isMobile && <div style={{
+        {/* Large diffused shadow — far below to sell floating height.
+            On mobile we use a lighter static shadow since gyro tilt is
+            animated via direct-DOM on the gyro wrapper (outside React). */}
+        <div style={{
           position: "absolute",
-          bottom: -60 + tilt.x * 8,
+          bottom: isMobile ? -40 : (-60 + tilt.x * 8),
           left: leavingCover ? "auto" : "50%",
           right: leavingCover ? PAGE_W / 2 : "auto",
-          transform: leavingCover ? `translateX(${50 + tilt.y * 12}%)` : `translateX(${-50 + tilt.y * 12}%)`,
-          width: visibleWidth * 1.1,
-          height: 80, borderRadius: "50%",
-          background: "radial-gradient(ellipse, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.2) 40%, transparent 70%)",
-          filter: `blur(${25 + Math.abs(tilt.x) * 4}px)`,
+          transform: isMobile
+            ? `translateX(${leavingCover ? 50 : -50}%)`
+            : (leavingCover ? `translateX(${50 + tilt.y * 12}%)` : `translateX(${-50 + tilt.y * 12}%)`),
+          width: visibleWidth * (isMobile ? 1.05 : 1.1),
+          height: isMobile ? 60 : 80,
+          borderRadius: "50%",
+          background: isMobile
+            ? "radial-gradient(ellipse, rgba(0,0,0,0.42) 0%, rgba(0,0,0,0.18) 40%, transparent 70%)"
+            : "radial-gradient(ellipse, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.2) 40%, transparent 70%)",
+          filter: isMobile ? "blur(20px)" : `blur(${25 + Math.abs(tilt.x) * 4}px)`,
           pointerEvents: "none",
           transition: flipping ? "none" : "all 0.12s ease-out",
-        }} />}
+          zIndex: 0,
+        }} />
 ﻿
         {/* Book container */}
         <div style={{
@@ -2058,6 +2087,20 @@ function Flipbook() {
             fontSize: isMobile ? 10 : 11, letterSpacing: 2,
             boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
           }}>SPAN</button>
+        )}
+
+        {/* DELETE selected image — visible whenever anything is selected.
+            On desktop users also have Del/Backspace; on mobile this is
+            the only way to remove a specific upload. */}
+        {isEditMode && selectedImg && (
+          <button onClick={deleteSelected} style={{
+            background: "rgba(140,30,30,0.9)", backdropFilter: "blur(8px)",
+            border: "1.5px solid rgba(200,60,60,0.35)",
+            color: "rgba(255,225,225,0.98)",
+            padding: isMobile ? "14px 16px" : "10px 22px", borderRadius: 8, cursor: "pointer",
+            fontSize: isMobile ? 11 : 11, letterSpacing: 2, fontWeight: "bold",
+            boxShadow: "0 2px 12px rgba(0,0,0,0.28)", transition: "all 0.15s ease",
+          }}>DELETE</button>
         )}
 
         {isEditMode && <button onClick={async () => {
