@@ -465,6 +465,9 @@ function Flipbook() {
   const lastFlipTime = useRef(0);
 ﻿
   const flipTo = useCallback((direction) => {
+    // Clear any stale image selection — otherwise uploads after a flip
+    // would still target the previously-selected image's page.
+    setSelectedImg(null);
     // Reset any user zoom so the flip animation plays from the full overview
     setUserZoom(1);
     setPanOffset({ x: 0, y: 0 });
@@ -2009,9 +2012,17 @@ function Flipbook() {
         }}>RESET</button>}
 
         {isEditMode && <button onClick={() => {
-          // Target the page the user is looking at. If an image is already selected,
-          // drop into the same page as the selection; otherwise pick the left page of the spread.
-          if (selectedImg) {
+          // Always target what the user is CURRENTLY looking at. Using
+          // a stale selection from a different page was causing uploads
+          // to silently land on the wrong spread.
+          const viewedLeftIdx = (currentSpread - 1) * 2;
+          const viewedRightIdx = viewedLeftIdx + 1;
+          const selectionValid = selectedImg && (
+            selectedImg.pageIdx === "cover"
+              ? currentSpread === 0
+              : selectedImg.pageIdx === viewedLeftIdx || selectedImg.pageIdx === viewedRightIdx
+          );
+          if (selectionValid) {
             uploadTargetRef.current = selectedImg.pageIdx === "cover"
               ? { kind: "cover" }
               : { kind: "page", pageIdx: selectedImg.pageIdx };
