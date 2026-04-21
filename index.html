@@ -1266,22 +1266,13 @@ function Flipbook() {
   let staticRight = null;
 ﻿
   if (flipping) {
-    // Only reveal the destination beneath the flip once the flipping
-    // page has rotated past halfway — before that, keep the current
-    // page visible so the destination doesn't "peek through" on mobile
-    // (root cause: mobile 3D pixel-alignment makes an opaque flip
-    // overlay briefly leak the page behind it at flipAngle ≈ 0).
-    const revealed = flipProgress > 0.5;
     if (flipDir === "next") {
       if (currentSpread === 0) {
-        // Leaving cover: show destination spread underneath
         staticLeft = destContent.left;
         staticRight = destContent.right;
       } else {
-        // Forward flip: left page stays as current (it's not moving),
-        // right page shows destination only after midpoint
         staticLeft = currentContent.left;
-        staticRight = revealed ? destContent.right : currentContent.right;
+        staticRight = destContent.right;
       }
     } else {
       if (destSpread === 0) {
@@ -1291,9 +1282,7 @@ function Flipbook() {
         staticLeft = destContent.left;
         staticRight = destContent.right;
       } else {
-        // Backward flip: right page stays as current (it's not moving),
-        // left page shows destination only after midpoint
-        staticLeft = revealed ? destContent.left : currentContent.left;
+        staticLeft = destContent.left;
         staticRight = currentContent.right;
       }
     }
@@ -1385,53 +1374,12 @@ function Flipbook() {
     }
   }, []);
 
-  // rAF loop that smoothly lerps the gyro rotation directly onto the DOM
-  // without causing React re-renders (eliminates jitter with zoom/pan).
-  useEffect(() => {
-    if (!isMobile) return;
-    let raf;
-    const tick = () => {
-      const target = gyroTargetRef.current;
-      const cur = gyroCurrentRef.current;
-      // 0.07 = much gentler chase, ~300ms settle. Combined with the
-      // sensor-level low-pass in attachGyro, feels buttery smooth.
-      cur.x += (target.x - cur.x) * 0.07;
-      cur.y += (target.y - cur.y) * 0.07;
-      // Skip DOM writes when movement is negligible to let the browser
-      // composite efficiently.
-      const dx = Math.abs(target.x - cur.x);
-      const dy = Math.abs(target.y - cur.y);
-      if (gyroRef.current && (dx > 0.02 || dy > 0.02)) {
-        gyroRef.current.style.transform = `rotateX(${cur.x.toFixed(2)}deg) rotateY(${cur.y.toFixed(2)}deg)`;
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [isMobile]);
-  // Auto-enable on Android / non-iOS where no permission is needed.
-  // On iOS, register a one-shot listener so the first tap triggers the permission prompt.
-  useEffect(() => {
-    if (!isMobile) return;
-    const needsPermission =
-      typeof DeviceOrientationEvent !== "undefined" &&
-      typeof DeviceOrientationEvent.requestPermission === "function";
-    if (!needsPermission) {
-      attachGyro();
-      return;
-    }
-    const onFirstTouch = () => {
-      attachGyro();
-      window.removeEventListener("touchend", onFirstTouch);
-      window.removeEventListener("click", onFirstTouch);
-    };
-    window.addEventListener("touchend", onFirstTouch, { once: true });
-    window.addEventListener("click", onFirstTouch, { once: true });
-    return () => {
-      window.removeEventListener("touchend", onFirstTouch);
-      window.removeEventListener("click", onFirstTouch);
-    };
-  }, [isMobile, attachGyro]);
+  // Gyro disabled: keeping the refs for back-compat but the rAF loop
+  // is a no-op. Gyro tilt interfered with the 3D flip animation's own
+  // transform context on mobile, causing weird page-turn glitches and
+  // unstable motion. Now the book is static like on PC.
+  // Gyro attach effect disabled — see comment above. The book on mobile
+  // stays level; users can pinch/zoom/pan like on PC.
 
   // Parallax tilt: track mouse relative to viewport center
   useEffect(() => {
@@ -1610,13 +1558,6 @@ function Flipbook() {
         @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Instrument+Serif&display=swap');
       `}</style>
 
-      {/* Gyro tilt wrapper (mobile only) — direct-DOM rAF driven */}
-      <div ref={gyroRef} style={{
-        display: "flex", alignItems: "center", justifyContent: "center",
-        position: "relative",
-        zIndex: 10,
-        ...(isMobile ? { willChange: "transform", transformStyle: "preserve-3d" } : null),
-      }}>
       {/* Outer wrapper for scaling + parallax tilt */}
       <div ref={bookRef} style={{
         transform: isMobile
@@ -2003,7 +1944,6 @@ function Flipbook() {
             }} />
           )}
         </div>
-      </div>
       </div>
 
       {/* Controls — floating bar on mobile so the book can take full screen */}
