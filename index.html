@@ -554,8 +554,8 @@ function Flipbook() {
           }
           const newImg = {
             src: compressed,
-            x: (PAGE_W - fitW) / 2,
-            y: (PAGE_H - fitH) / 2,
+            _fitW: fitW, _fitH: fitH, // temp so we can position later
+            x: 0, y: 0,
             w: fitW, h: fitH, rotation: 0,
             id: Date.now() + Math.random() + i,
           };
@@ -563,39 +563,93 @@ function Flipbook() {
           loaded++;
           if (loaded === files.length) {
             const imgs = built.filter(Boolean);
+            // Helper: place a new image on a page, offsetting so it
+            // doesn't land directly on top of existing images.
+            const placeOnPage = (pageImages, img, idx) => {
+              const existing = (pageImages || []).length + idx;
+              // Stagger new additions diagonally from center.
+              const jitter = existing * 24;
+              const baseX = (PAGE_W - img._fitW) / 2 + jitter;
+              const baseY = (PAGE_H - img._fitH) / 2 + jitter;
+              const { _fitW, _fitH, ...clean } = img;
+              return {
+                ...clean,
+                x: Math.max(20, Math.min(PAGE_W - img._fitW - 20, baseX)),
+                y: Math.max(20, Math.min(PAGE_H - img._fitH - 20, baseY)),
+              };
+            };
+            const IMG_CAP_PER_PAGE = 3;
+
             if (target && target.kind === "cover") {
-              setCoverPage(prev => ({ ...prev, images: [...prev.images, ...imgs] }));
+              setCoverPage(prev => ({
+                ...prev,
+                images: [...prev.images, ...imgs.map((im, idx) => placeOnPage(prev.images, im, idx))],
+              }));
             } else if (target && target.kind === "append") {
-              // User was on the back cover and uploaded — create a new
-              // empty spread, drop all images on its left page (extra
-              // images spill onto the right), then jump to that spread.
+              // User was on the back cover — create a fresh spread before
+              // the back cover, distribute images left→right→new spread
+              // if needed, and jump to the first new spread.
               setPages(prev => {
                 const newLeftIdx = prev.length;
-                const leftPage = { images: [imgs[0]].filter(Boolean) };
-                const rightImgs = imgs.slice(1);
-                const rightPage = { images: rightImgs };
-                const updated = [...prev, leftPage, rightPage];
+                const leftImgs = [];
+                const rightImgs = [];
+                imgs.forEach((im, idx) => {
+                  if (leftImgs.length < IMG_CAP_PER_PAGE) leftImgs.push(placeOnPage([], im, leftImgs.length));
+                  else if (rightImgs.length < IMG_CAP_PER_PAGE) rightImgs.push(placeOnPage([], im, rightImgs.length));
+                  else leftImgs.push(placeOnPage(leftImgs, im, leftImgs.length)); // overflow stack
+                });
+                const updated = [...prev, { images: leftImgs }, { images: rightImgs }];
                 const targetSpread = Math.floor(newLeftIdx / 2) + 1;
                 setTimeout(() => setCurrentSpread(targetSpread), 50);
                 return updated;
               });
             } else if (target && target.kind === "page") {
-              // Add all images to the specific page the user was viewing
+              // Add images to the specific page the user was viewing.
+              // If the page is already at capacity, overflow into the
+              // next page (or create a new spread) so nothing is buried.
               setPages(prev => {
-                const next = [...prev];
+                let next = [...prev];
                 const pageIdx = target.pageIdx;
                 if (pageIdx < 0 || pageIdx >= next.length) return prev;
-                next[pageIdx] = {
-                  ...next[pageIdx],
-                  images: [...(next[pageIdx].images || []), ...imgs],
-                };
+                let curIdx = pageIdx;
+                let remaining = [...imgs];
+                let jumped = false;
+                while (remaining.length) {
+                  if (curIdx >= next.length) {
+                    // Need a new page. Extend in pairs so book stays even.
+                    next = [...next, { images: [] }, { images: [] }];
+                    if (!jumped) {
+                      const ts = Math.floor(curIdx / 2) + 1;
+                      setTimeout(() => setCurrentSpread(ts), 50);
+                      jumped = true;
+                    }
+                  }
+                  const pg = next[curIdx];
+                  const room = Math.max(0, IMG_CAP_PER_PAGE - (pg.images || []).length);
+                  const take = remaining.splice(0, Math.max(1, room)); // always place at least 1
+                  const placed = take.map((im, idx) => placeOnPage(pg.images, im, idx));
+                  next[curIdx] = { ...pg, images: [...(pg.images || []), ...placed] };
+                  if (remaining.length) curIdx++;
+                }
                 return next;
               });
             } else {
               // Fallback: append as new pages at end
               setPages(prev => {
                 const firstNewIdx = prev.length;
-                const updated = [...prev, ...imgs.map(im => ({ images: [im] }))];
+                const newPages = [];
+                let bucket = { images: [] };
+                imgs.forEach((im) => {
+                  if (bucket.images.length >= IMG_CAP_PER_PAGE) {
+                    newPages.push(bucket);
+                    bucket = { images: [] };
+                  }
+                  bucket.images.push(placeOnPage(bucket.images, im, bucket.images.length));
+                });
+                if (bucket.images.length) newPages.push(bucket);
+                // Keep spread pairing even
+                if (newPages.length % 2 === 1) newPages.push({ images: [] });
+                const updated = [...prev, ...newPages];
                 const targetSpread = Math.floor(firstNewIdx / 2) + 1;
                 setTimeout(() => setCurrentSpread(targetSpread), 50);
                 return updated;
