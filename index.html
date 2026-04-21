@@ -1259,6 +1259,12 @@ function Flipbook() {
   let staticRight = null;
 ﻿
   if (flipping) {
+    // Only reveal the destination beneath the flip once the flipping
+    // page has rotated past halfway — before that, keep the current
+    // page visible so the destination doesn't "peek through" on mobile
+    // (root cause: mobile 3D pixel-alignment makes an opaque flip
+    // overlay briefly leak the page behind it at flipAngle ≈ 0).
+    const revealed = flipProgress > 0.5;
     if (flipDir === "next") {
       if (currentSpread === 0) {
         // Leaving cover: show destination spread underneath
@@ -1266,9 +1272,9 @@ function Flipbook() {
         staticRight = destContent.right;
       } else {
         // Forward flip: left page stays as current (it's not moving),
-        // right page shows destination (uncovered as flip lifts away)
+        // right page shows destination only after midpoint
         staticLeft = currentContent.left;
-        staticRight = destContent.right;
+        staticRight = revealed ? destContent.right : currentContent.right;
       }
     } else {
       if (destSpread === 0) {
@@ -1279,8 +1285,8 @@ function Flipbook() {
         staticRight = destContent.right;
       } else {
         // Backward flip: right page stays as current (it's not moving),
-        // left page shows destination (uncovered as flip lifts away)
-        staticLeft = destContent.left;
+        // left page shows destination only after midpoint
+        staticLeft = revealed ? destContent.left : currentContent.left;
         staticRight = currentContent.right;
       }
     }
