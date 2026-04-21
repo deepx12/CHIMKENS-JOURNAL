@@ -1312,17 +1312,37 @@ function Flipbook() {
 ﻿
   const [viewScale, setViewScale] = useState(1);
   const [tilt, setTilt] = useState({ x: 0, y: 0 });
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 700);
+  // "Mobile layout" = any touch device OR any narrow screen.
+  // This catches phones AND iPads (in both orientations) so tablets
+  // get floating controls, larger touch targets, full-bleed book.
+  const detectTouchLayout = () => {
+    if (typeof window === "undefined") return false;
+    const hasHover = window.matchMedia && window.matchMedia("(hover: hover)").matches;
+    const hasFinePointer = window.matchMedia && window.matchMedia("(pointer: fine)").matches;
+    const isTouch = ("ontouchstart" in window) || (navigator.maxTouchPoints > 0);
+    const narrow = window.innerWidth < 1100;
+    // Treat as "mobile" if the device is primarily touch (no hover / no
+    // fine pointer) regardless of width, OR if the screen is narrow.
+    return narrow || (isTouch && (!hasHover || !hasFinePointer));
+  };
+  const [isMobile, setIsMobile] = useState(detectTouchLayout);
+  // Separate flag for iPad-like widths so we can tune scale/padding.
+  const [isTablet, setIsTablet] = useState(() =>
+    typeof window !== "undefined" && window.innerWidth >= 700 && window.innerWidth < 1200
+  );
   const bookRef = useRef(null);
   useEffect(() => {
     const calcScale = () => {
-      const mobile = window.innerWidth < 700;
+      const mobile = detectTouchLayout();
+      const tablet = window.innerWidth >= 700 && window.innerWidth < 1200;
       setIsMobile(mobile);
+      setIsTablet(tablet);
       if (mobile) {
-        // Fit the full spread (both pages) with a tiny side margin,
-        // leaving room for the controls row at the bottom.
-        const controlsH = 72;
-        const maxW = window.innerWidth * 0.96;
+        // Fit the full spread (both pages). Tablets have more vertical
+        // room, so we give the controls a bit more breathing space.
+        const controlsH = tablet ? 88 : 72;
+        const sideMargin = tablet ? 0.92 : 0.96;
+        const maxW = window.innerWidth * sideMargin;
         const maxH = window.innerHeight - controlsH;
         setViewScale(Math.min(maxW / spreadWidth, maxH / PAGE_H, 1));
       } else {
@@ -1333,7 +1353,11 @@ function Flipbook() {
     };
     calcScale();
     window.addEventListener("resize", calcScale);
-    return () => window.removeEventListener("resize", calcScale);
+    window.addEventListener("orientationchange", calcScale);
+    return () => {
+      window.removeEventListener("resize", calcScale);
+      window.removeEventListener("orientationchange", calcScale);
+    };
   }, []);
 ﻿
   // Device orientation (gyro) tilt for mobile — book leans with the phone.
@@ -1950,16 +1974,18 @@ function Flipbook() {
       <div style={{
         marginTop: isMobile ? 0 : 48,
         display: "flex", alignItems: "center",
-        gap: isMobile ? 10 : 18,
+        gap: isTablet ? 14 : isMobile ? 10 : 18,
         fontFamily: "'Space Mono', monospace",
         zIndex: 10,
         position: isMobile ? "absolute" : "relative",
-        bottom: isMobile ? "max(16px, env(safe-area-inset-bottom, 0))" : "auto",
+        bottom: isMobile ? "max(20px, env(safe-area-inset-bottom, 0))" : "auto",
         left: isMobile ? 0 : "auto",
         right: isMobile ? 0 : "auto",
         width: isMobile ? "100%" : "auto",
         justifyContent: "center",
         flexShrink: 0,
+        flexWrap: isMobile ? "wrap" : "nowrap",
+        padding: isMobile ? "0 12px" : 0,
       }}>
         <button onClick={() => flipTo("prev")} disabled={currentSpread <= 0 || flipping}
           style={{
