@@ -1330,12 +1330,22 @@ function Flipbook() {
   let staticRight = null;
 ﻿
   if (flipping) {
+    // After the leaf has rotated past vertical (flipProgress > 0.5), the
+    // BACK face of the leaf is what's visible — and that back face
+    // already shows the destination page content. Swap the static page
+    // underneath the leaf to the destination content at that point too,
+    // so when the leaf finally disappears there's nothing to flash:
+    // whatever was showing through the back face is already what's
+    // under the leaf. Fixes the "previous page shows on next page for a
+    // sec" flicker that mobile Safari/Chrome exhibit because they
+    // sometimes drop the leaf a paint frame before the static updates.
+    const past = flipProgress >= 0.5;
     if (flipDir === "next") {
       if (currentSpread === 0) {
         staticLeft = destContent.left;
         staticRight = destContent.right;
       } else {
-        staticLeft = currentContent.left;
+        staticLeft = past ? destContent.left : currentContent.left;
         staticRight = destContent.right;
       }
     } else {
@@ -1347,7 +1357,7 @@ function Flipbook() {
         staticRight = destContent.right;
       } else {
         staticLeft = destContent.left;
-        staticRight = currentContent.right;
+        staticRight = past ? destContent.right : currentContent.right;
       }
     }
   } else {
@@ -1665,7 +1675,7 @@ function Flipbook() {
           no extra transform wrapper, so the 3D page-flip context stays
           intact on mobile. */}
       <div ref={bookRef} style={{
-        display: (mode === "ipad" && !modeTransition) ? "none" : undefined,
+        display: (mode === "ipad" && !modeTransition) ? "none" : "flex",
         opacity: (modeTransition === "to-ipad" || mode === "ipad") ? 0 : 1,
         pointerEvents: (mode === "ipad" || modeTransition) ? "none" : "auto",
         transform: isMobile
@@ -1683,7 +1693,6 @@ function Flipbook() {
         height: PAGE_H,
         position: "relative",
         zIndex: 10,
-        display: "flex",
         justifyContent: leavingCover ? "flex-end" : (leavingBack || arrivingBack) ? "flex-start" : "center",
       }}>
         {/* Large diffused shadow — far below to sell floating height.
