@@ -2070,7 +2070,11 @@ function Flipbook() {
         const vpW = typeof window !== "undefined" ? window.innerWidth : 1024;
         const vpH = typeof window !== "undefined" ? window.innerHeight : 768;
         const maxW = Math.min(vpW * (isMobile ? 0.94 : 0.75), 1100);
-        const maxH = vpH * (isMobile ? 0.78 : 0.82);
+        // Leave headroom for the fixed top segmented header (+~90px)
+        // and bottom edit controls (+~70px when in edit mode).
+        const topReserve = 90;
+        const bottomReserve = isEditMode ? 80 : 30;
+        const maxH = Math.max(240, vpH - topReserve - bottomReserve);
         let ipadW = maxW, ipadH = ipadW * 0.74;
         if (ipadH > maxH) { ipadH = maxH; ipadW = ipadH / 0.74; }
         const bezel = isMobile ? 14 : 22;
@@ -2206,43 +2210,55 @@ function Flipbook() {
               </>
             )}
 
-            {/* Label */}
-            <div style={{
-              position: "absolute", top: isMobile ? 18 : 28,
-              left: "50%", transform: "translateX(-50%)",
-              color: "rgba(245,235,220,0.55)",
-              fontFamily: "'Space Mono', monospace",
-              fontSize: 10, letterSpacing: 4,
-              textShadow: "0 1px 4px rgba(0,0,0,0.5)",
-              pointerEvents: "none",
-            }}>✦  DIGITAL  ART  ✦</div>
+            {/* (The top segmented header already labels this view.) */}
           </div>
         );
       })()}
 
-      {/* Mode-switch button — always visible, top-right corner.
-          Swaps between book and iPad views with an animated transition. */}
-      <button
-        onClick={() => switchMode(mode === "book" ? "ipad" : "book")}
-        title={mode === "book" ? "Switch to digital art" : "Back to sketchbook"}
-        style={{
-          position: "fixed",
-          top: "max(16px, env(safe-area-inset-top, 0px))",
-          right: 16,
-          zIndex: 25,
-          width: isMobile ? 52 : 58, height: isMobile ? 52 : 58,
-          borderRadius: "50%",
-          background: mode === "book" ? "rgba(20,14,8,0.88)" : "rgba(30,40,60,0.92)",
-          backdropFilter: "blur(10px)",
-          border: `1.5px solid ${mode === "book" ? "rgba(245,235,220,0.25)" : "rgba(180,210,255,0.3)"}`,
-          color: mode === "book" ? "rgba(245,235,220,0.95)" : "rgba(220,235,255,0.95)",
-          fontSize: isMobile ? 22 : 24,
-          cursor: "pointer",
-          boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
-          transition: "all 0.25s ease",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}
-      >{mode === "book" ? "🖼" : "📖"}</button>
+      {/* Mode-switch header — always visible segmented toggle at the top.
+          Both section names are shown so the user always knows what
+          exists and which one they're in. Click either label to switch. */}
+      <div style={{
+        position: "fixed",
+        top: "max(14px, env(safe-area-inset-top, 0px))",
+        left: "50%", transform: "translateX(-50%)",
+        zIndex: 25,
+        display: "flex",
+        background: mode === "book" ? "rgba(245,240,228,0.88)" : "rgba(18,22,30,0.88)",
+        backdropFilter: "blur(12px)",
+        border: `1.5px solid ${mode === "book" ? "rgba(40,28,14,0.22)" : "rgba(180,210,255,0.22)"}`,
+        borderRadius: 999,
+        padding: 4,
+        boxShadow: "0 6px 22px rgba(0,0,0,0.28)",
+        fontFamily: "'Space Mono', monospace",
+        transition: "background 0.4s ease, border-color 0.4s ease",
+      }}>
+        {[
+          { id: "book", label: "SKETCHBOOK" },
+          { id: "ipad", label: "DIGITAL ART" },
+        ].map(tab => {
+          const active = mode === tab.id;
+          return (
+            <button key={tab.id} onClick={() => switchMode(tab.id)} style={{
+              background: active
+                ? (tab.id === "book" ? "rgba(40,28,14,0.92)" : "rgba(120,160,220,0.22)")
+                : "transparent",
+              color: active
+                ? (tab.id === "book" ? "rgba(245,235,220,0.98)" : "rgba(220,235,255,0.98)")
+                : (mode === "book" ? "rgba(40,28,14,0.55)" : "rgba(200,215,235,0.55)"),
+              border: active && tab.id === "ipad" ? "1px solid rgba(180,210,255,0.35)" : "1px solid transparent",
+              padding: isMobile ? "9px 14px" : "10px 22px",
+              borderRadius: 999,
+              cursor: active ? "default" : "pointer",
+              fontSize: isMobile ? 10 : 11,
+              letterSpacing: 2.5,
+              fontWeight: "bold",
+              transition: "all 0.25s ease",
+              whiteSpace: "nowrap",
+            }}>{tab.label}</button>
+          );
+        })}
+      </div>
 
       {/* iPad-mode controls (edit only): +ART and DELETE */}
       {isEditMode && mode === "ipad" && !modeTransition && (
