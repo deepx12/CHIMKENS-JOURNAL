@@ -255,11 +255,18 @@ function Flipbook() {
     if (!Array.isArray(p.images)) return { images: [] };
     return { images: p.images.filter(im => im && im.src) };
   };
+  const sanitizeIpadArt = (arr) => {
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .filter(a => a && typeof a.src === "string")
+      .map(a => ({ id: a.id || (Date.now() + Math.random()), src: a.src, title: a.title || "" }));
+  };
   const sanitizeState = (s) => {
     if (!s || typeof s !== "object") return null;
     return {
       pages: Array.isArray(s.pages) ? s.pages.map(sanitizePage) : [],
       coverPage: sanitizePage(s.coverPage),
+      ipadArt: sanitizeIpadArt(s.ipadArt),
     };
   };
   const loadSaved = () => {
@@ -291,6 +298,12 @@ function Flipbook() {
   const [coverPage, setCoverPage] = useState(
     savedData.current?.coverPage || { images: [] }
   );
+  const [ipadArt, setIpadArt] = useState(
+    savedData.current?.ipadArt || []
+  );
+  const [mode, setMode] = useState("book"); // 'book' | 'ipad'
+  const [modeTransition, setModeTransition] = useState(null); // null | 'to-ipad' | 'to-book'
+  const [ipadIdx, setIpadIdx] = useState(0);
   const [currentSpread, setCurrentSpread] = useState(0);
   const [flipping, setFlipping] = useState(false);
   const [flipProgress, setFlipProgress] = useState(0);
@@ -349,13 +362,13 @@ function Flipbook() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       try {
-        localStorage.setItem("flipbook-data", JSON.stringify({ pages, coverPage }));
+        localStorage.setItem("flipbook-data", JSON.stringify({ pages, coverPage, ipadArt }));
       } catch (e) {
         console.warn("Save failed — storage may be full", e);
       }
     }, 500); // debounce 500ms
     return () => clearTimeout(saveTimer.current);
-  }, [pages, coverPage]);
+  }, [pages, coverPage, ipadArt]);
 ﻿
   // Number of spreads: cover + ceil(contentPages/2) + back
   // Book grows with the pages array — each spread holds 2 page sides,
@@ -636,7 +649,18 @@ function Flipbook() {
               return [next, firstTargetSpread];
             };
 
-            if (target && target.kind === "cover") {
+            if (target && target.kind === "ipad") {
+              // iPad art: simple append as full-frame pieces. Strip layout fields.
+              const cleanPieces = imgs.map(im => ({
+                id: im.id, src: im.src, title: "",
+              }));
+              setIpadArt(prev => {
+                const next = [...prev, ...cleanPieces];
+                // Jump to the first newly added piece
+                setTimeout(() => setIpadIdx(prev.length), 50);
+                return next;
+              });
+            } else if (target && target.kind === "cover") {
               setCoverPage(prev => {
                 const placed = [];
                 const working = [...prev.images];
@@ -741,6 +765,40 @@ function Flipbook() {
     });
   }, [selectedImg]);
 
+  // Switch between book mode and iPad (digital art) mode with a smooth
+  // animation: book slides off to the left while iPad slides up from
+  // below with a subtle power-on glow. Reverses for the opposite switch.
+  const modeSwitchingRef = useRef(false);
+  const switchMode = useCallback((target) => {
+    if (modeSwitchingRef.current) return;
+    if (mode === target) return;
+    modeSwitchingRef.current = true;
+    setSelectedImg(null);
+    setModeTransition(target === "ipad" ? "to-ipad" : "to-book");
+    setTimeout(() => {
+      setMode(target);
+      setModeTransition(null);
+      modeSwitchingRef.current = false;
+    }, 650);
+  }, [mode]);
+
+  // iPad navigation: prev/next piece.
+  const ipadNext = useCallback(() => {
+    if (ipadArt.length === 0) return;
+    setIpadIdx(i => Math.min(i + 1, ipadArt.length - 1));
+  }, [ipadArt.length]);
+  const ipadPrev = useCallback(() => {
+    setIpadIdx(i => Math.max(i - 1, 0));
+  }, []);
+  const deleteIpadArt = useCallback(() => {
+    if (ipadArt.length === 0) return;
+    setIpadArt(prev => {
+      const next = prev.filter((_, i) => i !== ipadIdx);
+      setTimeout(() => setIpadIdx(Math.max(0, Math.min(ipadIdx, next.length - 1))), 0);
+      return next;
+    });
+  }, [ipadArt, ipadIdx]);
+
   // Delete the currently selected image. Shared by keyboard (Del/Backspace)
   // and the mobile DELETE button so behavior stays consistent.
   const deleteSelected = useCallback(() => {
@@ -791,8 +849,14 @@ function Flipbook() {
         deleteSelected();
         return;
       }
-      if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); flipTo("next"); }
-      if (e.key === "ArrowLeft") { e.preventDefault(); flipTo("prev"); }
+      if (e.key === "ArrowRight" || e.key === " ") {
+        e.preventDefault();
+        if (mode === "ipad") ipadNext(); else flipTo("next");
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        if (mode === "ipad") ipadPrev(); else flipTo("prev");
+      }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -1454,6 +1518,7 @@ function Flipbook() {
   }, []);
 
   const handleTouchStart = useCallback((e) => {
+    if (mode !== "book") return; // iPad overlay owns its own touch logic
     if (draggingImg || resizingImg || rotatingImg) return;
     if (e.touches.length === 2) {
       // Pinch start
@@ -1489,9 +1554,10 @@ function Flipbook() {
         swipeStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: now };
       }
     }
-  }, [draggingImg, resizingImg, rotatingImg, userZoom, panOffset, setZoomSmooth]);
+  }, [draggingImg, resizingImg, rotatingImg, userZoom, panOffset, setZoomSmooth, mode]);
 
   const handleTouchMove = useCallback((e) => {
+    if (mode !== "book") return;
     if (e.touches.length === 2 && pinchStart.current) {
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
@@ -1510,9 +1576,10 @@ function Flipbook() {
         y: panStart.current.origY + dy,
       });
     }
-  }, [userZoom]);
+  }, [userZoom, mode]);
 
   const handleTouchEnd = useCallback((e) => {
+    if (mode !== "book") return;
     setIsTouching(false);
     // End pinch/pan
     if (pinchStart.current || panStart.current) {
@@ -1529,7 +1596,7 @@ function Flipbook() {
     if (Math.abs(dx) < Math.abs(dy) * 1.2 || Math.abs(dx) < 40 || dt > 500) return;
     if (dx < 0) flipTo("next");
     else flipTo("prev");
-  }, [flipTo, userZoom]);
+  }, [flipTo, userZoom, mode]);
 
   // Width: single page for cover/back states, double for spreads.
   // Same logic on mobile and desktop — mobile just scales down so the
@@ -1580,8 +1647,29 @@ function Flipbook() {
 
 <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Instrument+Serif&display=swap');
+        @keyframes ipadScreenGlow {
+          0% { box-shadow: 0 20px 60px rgba(0,0,0,0.55), 0 0 0 rgba(120,180,255,0); }
+          40% { box-shadow: 0 22px 70px rgba(0,0,0,0.55), 0 0 80px rgba(120,180,255,0.55); }
+          100% { box-shadow: 0 22px 70px rgba(0,0,0,0.55), 0 0 30px rgba(120,180,255,0.18); }
+        }
       `}</style>
 
+      {/* Mode-switch wrapper: slides the entire book off-screen when the
+          user flips to iPad mode, and back in when returning. */}
+      <div style={{
+        display: (mode === "ipad" && !modeTransition) ? "none" : "flex",
+        alignItems: "center", justifyContent: "center",
+        transform: modeTransition === "to-ipad"
+          ? "translateX(-120%) scale(0.85)"
+          : modeTransition === "to-book"
+            ? "translateX(0) scale(1)"
+            : (mode === "book" ? "translateX(0) scale(1)" : "translateX(-120%) scale(0.85)"),
+        opacity: (modeTransition === "to-ipad") ? 0 : (mode === "ipad" ? 0 : 1),
+        transition: "transform 0.6s cubic-bezier(0.65, 0, 0.35, 1), opacity 0.45s ease",
+        pointerEvents: (mode === "ipad" || modeTransition) ? "none" : "auto",
+        width: "100%",
+        zIndex: 10,
+      }}>
       {/* Outer wrapper for scaling + parallax tilt */}
       <div ref={bookRef} style={{
         transform: isMobile
@@ -1969,11 +2057,232 @@ function Flipbook() {
           )}
         </div>
       </div>
+      </div>{/* /mode-switch book wrapper */}
+
+      {/* iPad mode overlay — digital art gallery. Slides up from bottom
+          with a subtle power-on glow when activated. */}
+      {(mode === "ipad" || modeTransition) && (() => {
+        const currentArt = ipadArt[ipadIdx] || null;
+        const isEntering = modeTransition === "to-ipad";
+        const isLeaving = modeTransition === "to-book";
+        const isIdle = mode === "ipad" && !modeTransition;
+        // iPad physical-ish sizing: 4:3 frame, scaled to viewport.
+        const vpW = typeof window !== "undefined" ? window.innerWidth : 1024;
+        const vpH = typeof window !== "undefined" ? window.innerHeight : 768;
+        const maxW = Math.min(vpW * (isMobile ? 0.94 : 0.75), 1100);
+        const maxH = vpH * (isMobile ? 0.78 : 0.82);
+        let ipadW = maxW, ipadH = ipadW * 0.74;
+        if (ipadH > maxH) { ipadH = maxH; ipadW = ipadH / 0.74; }
+        const bezel = isMobile ? 14 : 22;
+        const screenW = ipadW - bezel * 2;
+        const screenH = ipadH - bezel * 2;
+        return (
+          <div
+            onTouchStart={(e) => {
+              e.stopPropagation();
+              if (e.touches.length !== 1) return;
+              swipeStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+            }}
+            onTouchMove={(e) => { e.stopPropagation(); }}
+            onTouchEnd={(e) => {
+              e.stopPropagation();
+              const s = swipeStart.current;
+              if (!s) return;
+              swipeStart.current = null;
+              const dx = e.changedTouches[0].clientX - s.x;
+              const dy = e.changedTouches[0].clientY - s.y;
+              const dt = Date.now() - s.t;
+              if (Math.abs(dx) < Math.abs(dy) * 1.2 || Math.abs(dx) < 40 || dt > 500) return;
+              if (dx < 0) ipadNext(); else ipadPrev();
+            }}
+            style={{
+              position: "absolute", inset: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              zIndex: 15,
+              transform: isEntering
+                ? "translateY(0) scale(1)"
+                : isLeaving
+                  ? "translateY(110%) scale(0.92)"
+                  : (isIdle ? "translateY(0) scale(1)" : "translateY(110%) scale(0.92)"),
+              opacity: isEntering ? 1 : isLeaving ? 0 : (isIdle ? 1 : 0),
+              transition: "transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.45s ease",
+              pointerEvents: (isIdle || isEntering) ? "auto" : "none",
+            }}
+          >
+            {/* iPad device frame */}
+            <div style={{
+              width: ipadW, height: ipadH,
+              background: "linear-gradient(145deg, #2a2d33 0%, #1a1c20 60%, #111216 100%)",
+              borderRadius: isMobile ? 26 : 38,
+              padding: bezel,
+              position: "relative",
+              boxShadow: "0 30px 80px rgba(0,0,0,0.55), 0 10px 25px rgba(0,0,0,0.3), inset 0 0 0 1.5px rgba(255,255,255,0.06)",
+              animation: isEntering ? "ipadScreenGlow 0.8s ease-out" : "none",
+            }}>
+              {/* Front camera dot */}
+              <div style={{
+                position: "absolute", top: bezel / 2 + 2, left: "50%", transform: "translateX(-50%)",
+                width: 6, height: 6, borderRadius: "50%",
+                background: "radial-gradient(circle, #1a1a1a 40%, #2a2a2a 100%)",
+                boxShadow: "inset 0 0 2px rgba(255,255,255,0.12)",
+              }} />
+              {/* Screen */}
+              <div style={{
+                width: screenW, height: screenH,
+                background: currentArt ? "#0a0a0a" : "linear-gradient(135deg, #1a1d24 0%, #0e1015 100%)",
+                borderRadius: isMobile ? 14 : 18,
+                overflow: "hidden",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                position: "relative",
+              }}>
+                {currentArt ? (
+                  <img src={currentArt.src} alt="" draggable="false" style={{
+                    maxWidth: "100%", maxHeight: "100%", objectFit: "contain",
+                    userSelect: "none", pointerEvents: "none",
+                  }} />
+                ) : (
+                  <div style={{
+                    color: "rgba(200,210,230,0.5)",
+                    fontFamily: "'Space Mono', monospace", fontSize: 13, letterSpacing: 3,
+                    textAlign: "center", padding: 20,
+                  }}>
+                    {isEditMode ? "TAP  +ART  TO  UPLOAD  DIGITAL  ART" : "NO  ART  YET"}
+                  </div>
+                )}
+                {/* Screen reflection sheen */}
+                <div style={{
+                  position: "absolute", inset: 0,
+                  background: "linear-gradient(135deg, rgba(255,255,255,0.05) 0%, transparent 40%, transparent 100%)",
+                  pointerEvents: "none",
+                }} />
+                {/* Counter */}
+                {ipadArt.length > 0 && (
+                  <div style={{
+                    position: "absolute", bottom: 10, right: 14,
+                    color: "rgba(255,255,255,0.45)",
+                    fontFamily: "'Space Mono', monospace",
+                    fontSize: 10, letterSpacing: 2,
+                    background: "rgba(0,0,0,0.35)",
+                    padding: "3px 8px", borderRadius: 10,
+                    backdropFilter: "blur(4px)",
+                  }}>{ipadIdx + 1} / {ipadArt.length}</div>
+                )}
+              </div>
+              {/* Home bar indicator (bottom) */}
+              <div style={{
+                position: "absolute", bottom: bezel / 2 - 1, left: "50%", transform: "translateX(-50%)",
+                width: 56, height: 3, borderRadius: 2,
+                background: "rgba(255,255,255,0.12)",
+              }} />
+            </div>
+
+            {/* iPad nav arrows */}
+            {ipadArt.length > 1 && (
+              <>
+                <button onClick={ipadPrev} disabled={ipadIdx === 0} style={{
+                  position: "absolute", left: isMobile ? 12 : 40,
+                  top: "50%", transform: "translateY(-50%)",
+                  width: isMobile ? 48 : 54, height: isMobile ? 48 : 54, borderRadius: "50%",
+                  background: "rgba(20,14,8,0.82)", backdropFilter: "blur(8px)",
+                  border: "1.5px solid rgba(255,255,255,0.12)",
+                  color: ipadIdx === 0 ? "rgba(255,255,255,0.25)" : "rgba(245,235,220,0.95)",
+                  fontSize: 22, cursor: ipadIdx === 0 ? "default" : "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
+                  zIndex: 16,
+                }}>←</button>
+                <button onClick={ipadNext} disabled={ipadIdx >= ipadArt.length - 1} style={{
+                  position: "absolute", right: isMobile ? 12 : 40,
+                  top: "50%", transform: "translateY(-50%)",
+                  width: isMobile ? 48 : 54, height: isMobile ? 48 : 54, borderRadius: "50%",
+                  background: "rgba(20,14,8,0.82)", backdropFilter: "blur(8px)",
+                  border: "1.5px solid rgba(255,255,255,0.12)",
+                  color: ipadIdx >= ipadArt.length - 1 ? "rgba(255,255,255,0.25)" : "rgba(245,235,220,0.95)",
+                  fontSize: 22, cursor: ipadIdx >= ipadArt.length - 1 ? "default" : "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
+                  zIndex: 16,
+                }}>→</button>
+              </>
+            )}
+
+            {/* Label */}
+            <div style={{
+              position: "absolute", top: isMobile ? 18 : 28,
+              left: "50%", transform: "translateX(-50%)",
+              color: "rgba(245,235,220,0.55)",
+              fontFamily: "'Space Mono', monospace",
+              fontSize: 10, letterSpacing: 4,
+              textShadow: "0 1px 4px rgba(0,0,0,0.5)",
+              pointerEvents: "none",
+            }}>✦  DIGITAL  ART  ✦</div>
+          </div>
+        );
+      })()}
+
+      {/* Mode-switch button — always visible, top-right corner.
+          Swaps between book and iPad views with an animated transition. */}
+      <button
+        onClick={() => switchMode(mode === "book" ? "ipad" : "book")}
+        title={mode === "book" ? "Switch to digital art" : "Back to sketchbook"}
+        style={{
+          position: "fixed",
+          top: "max(16px, env(safe-area-inset-top, 0px))",
+          right: 16,
+          zIndex: 25,
+          width: isMobile ? 52 : 58, height: isMobile ? 52 : 58,
+          borderRadius: "50%",
+          background: mode === "book" ? "rgba(20,14,8,0.88)" : "rgba(30,40,60,0.92)",
+          backdropFilter: "blur(10px)",
+          border: `1.5px solid ${mode === "book" ? "rgba(245,235,220,0.25)" : "rgba(180,210,255,0.3)"}`,
+          color: mode === "book" ? "rgba(245,235,220,0.95)" : "rgba(220,235,255,0.95)",
+          fontSize: isMobile ? 22 : 24,
+          cursor: "pointer",
+          boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+          transition: "all 0.25s ease",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}
+      >{mode === "book" ? "🖼" : "📖"}</button>
+
+      {/* iPad-mode controls (edit only): +ART and DELETE */}
+      {isEditMode && mode === "ipad" && !modeTransition && (
+        <div style={{
+          position: "fixed",
+          bottom: "max(20px, env(safe-area-inset-bottom, 0px))",
+          left: "50%", transform: "translateX(-50%)",
+          display: "flex", gap: 10,
+          zIndex: 20,
+          fontFamily: "'Space Mono', monospace",
+        }}>
+          <button onClick={() => {
+            uploadTargetRef.current = { kind: "ipad" };
+            fileRef.current.click();
+          }} style={{
+            background: "rgba(30,60,100,0.9)", backdropFilter: "blur(8px)",
+            border: "1.5px solid rgba(100,160,220,0.35)",
+            color: "rgba(220,235,255,0.95)",
+            padding: isMobile ? "14px 18px" : "10px 22px", borderRadius: 8, cursor: "pointer",
+            fontSize: isMobile ? 10 : 11, letterSpacing: 2, fontWeight: "bold",
+            boxShadow: "0 2px 12px rgba(0,0,0,0.35)",
+          }}>+ ART</button>
+          {ipadArt.length > 0 && (
+            <button onClick={deleteIpadArt} style={{
+              background: "rgba(140,30,30,0.9)", backdropFilter: "blur(8px)",
+              border: "1.5px solid rgba(200,60,60,0.35)",
+              color: "rgba(255,225,225,0.98)",
+              padding: isMobile ? "14px 16px" : "10px 22px", borderRadius: 8, cursor: "pointer",
+              fontSize: isMobile ? 10 : 11, letterSpacing: 2, fontWeight: "bold",
+              boxShadow: "0 2px 12px rgba(0,0,0,0.35)",
+            }}>DELETE</button>
+          )}
+        </div>
+      )}
 
       {/* Controls — floating bar on mobile so the book can take full screen */}
       <div style={{
         marginTop: isMobile ? 0 : 48,
-        display: "flex", alignItems: "center",
+        display: (mode === "ipad" && !modeTransition) ? "none" : "flex",
+        alignItems: "center",
         gap: isTablet ? 14 : isMobile ? 10 : 18,
         fontFamily: "'Space Mono', monospace",
         zIndex: 10,
@@ -2076,7 +2385,7 @@ function Flipbook() {
           btn.textContent = "Publishing…";
           btn.disabled = true;
           try {
-            const body = JSON.stringify({ password: pwd, state: { pages, coverPage } });
+            const body = JSON.stringify({ password: pwd, state: { pages, coverPage, ipadArt } });
             // Vercel serverless functions cap request bodies around 4.5MB.
             // Warn early so the user can shrink before waiting for a 413.
             const mb = body.length / (1024 * 1024);
