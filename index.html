@@ -1655,9 +1655,13 @@ function Flipbook() {
       `}</style>
 
       {/* Mode-switch wrapper: slides the entire book off-screen when the
-          user flips to iPad mode, and back in when returning. */}
+          user flips to iPad mode, and back in when returning. Uses the
+          same flex-column centering as the outer container so the book's
+          natural layout (desktop + mobile) is unchanged — only transform
+          and opacity animate. Identical timing on all devices. */}
       <div style={{
         display: (mode === "ipad" && !modeTransition) ? "none" : "flex",
+        flexDirection: "column",
         alignItems: "center", justifyContent: "center",
         transform: modeTransition === "to-ipad"
           ? "translateX(-120%) scale(0.85)"
@@ -1666,8 +1670,10 @@ function Flipbook() {
             : (mode === "book" ? "translateX(0) scale(1)" : "translateX(-120%) scale(0.85)"),
         opacity: (modeTransition === "to-ipad") ? 0 : (mode === "ipad" ? 0 : 1),
         transition: "transform 0.6s cubic-bezier(0.65, 0, 0.35, 1), opacity 0.45s ease",
+        willChange: "transform, opacity",
         pointerEvents: (mode === "ipad" || modeTransition) ? "none" : "auto",
         width: "100%",
+        position: "relative",
         zIndex: 10,
       }}>
       {/* Outer wrapper for scaling + parallax tilt */}
@@ -2110,6 +2116,8 @@ function Flipbook() {
                   : (isIdle ? "translateY(0) scale(1)" : "translateY(110%) scale(0.92)"),
               opacity: isEntering ? 1 : isLeaving ? 0 : (isIdle ? 1 : 0),
               transition: "transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.45s ease",
+              transformOrigin: "center center",
+              willChange: "transform, opacity",
               pointerEvents: (isIdle || isEntering) ? "auto" : "none",
             }}
           >
