@@ -1654,42 +1654,31 @@ function Flipbook() {
         }
       `}</style>
 
-      {/* Mode-switch wrapper: slides the entire book off-screen when the
-          user flips to iPad mode, and back in when returning.
-
-          IMPORTANT: when idle in book mode we set transform to "none"
-          (not translateX(0) scale(1)). Any non-none transform creates a
-          new stacking + transform context, which on mobile Safari/Chrome
-          flattens the inner 3D page-flip perspective and causes the
-          destination page to peek through mid-flip. Keeping it "none"
-          at rest preserves the native 3D flip on phones. */}
-      <div style={{
-        display: (mode === "ipad" && !modeTransition) ? "none" : "flex",
-        flexDirection: "column",
-        alignItems: "center", justifyContent: "center",
-        transform: modeTransition === "to-ipad"
-          ? "translateX(-120%) scale(0.85)"
-          : modeTransition === "to-book"
-            ? "none"
-            : (mode === "book" ? "none" : "translateX(-120%) scale(0.85)"),
-        opacity: (modeTransition === "to-ipad") ? 0 : (mode === "ipad" ? 0 : 1),
-        transition: "transform 0.6s cubic-bezier(0.65, 0, 0.35, 1), opacity 0.45s ease",
-        willChange: modeTransition ? "transform, opacity" : "auto",
-        pointerEvents: (mode === "ipad" || modeTransition) ? "none" : "auto",
-        width: "100%",
-        zIndex: 10,
-      }}>
-      {/* Outer wrapper for scaling + parallax tilt */}
+      {/* NOTE: the mode-switch logic is applied directly to bookRef below
+          (opacity + display only). We deliberately do NOT wrap the book
+          in another transforming div — any transform on an ancestor
+          flattens the inner 3D page-flip context on mobile and makes the
+          destination page peek through mid-flip. This keeps the native
+          3D stack identical to desktop. */}
+      {/* Outer wrapper for scaling + parallax tilt.
+          Mode-switch fade is handled here via opacity + display only —
+          no extra transform wrapper, so the 3D page-flip context stays
+          intact on mobile. */}
       <div ref={bookRef} style={{
+        display: (mode === "ipad" && !modeTransition) ? "none" : undefined,
+        opacity: (modeTransition === "to-ipad" || mode === "ipad") ? 0 : 1,
+        pointerEvents: (mode === "ipad" || modeTransition) ? "none" : "auto",
         transform: isMobile
           ? `perspective(1400px) translate(${panOffset.x}px, ${panOffset.y}px) scale(${viewScale * userZoom})`
           : `perspective(1200px) scale(${viewScale}) rotateX(${flipping ? 0 : tilt.x}deg) rotateY(${flipping ? 0 : tilt.y}deg)`,
         transformOrigin: "center center",
         transition: (flipping || isTouching)
           ? "none"
-          : zoomAnimating
-            ? "transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), width 0.3s cubic-bezier(0.25, 0.1, 0.25, 1)"
-            : "transform 0.12s ease-out, width 0.3s cubic-bezier(0.25, 0.1, 0.25, 1)",
+          : modeTransition
+            ? "opacity 0.45s ease"
+            : zoomAnimating
+              ? "transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), width 0.3s cubic-bezier(0.25, 0.1, 0.25, 1)"
+              : "transform 0.12s ease-out, width 0.3s cubic-bezier(0.25, 0.1, 0.25, 1)",
         width: (leavingCover || leavingBack || arrivingBack) ? spreadWidth : visibleWidth,
         height: PAGE_H,
         position: "relative",
@@ -2066,7 +2055,6 @@ function Flipbook() {
           )}
         </div>
       </div>
-      </div>{/* /mode-switch book wrapper */}
 
       {/* iPad mode overlay — digital art gallery. Slides up from bottom
           with a subtle power-on glow when activated. */}
