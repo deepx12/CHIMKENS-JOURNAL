@@ -306,8 +306,12 @@ function Flipbook() {
   const [ipadIdx, setIpadIdx] = useState(0);
   const [currentSpread, setCurrentSpread] = useState(0);
   const [flipping, setFlipping] = useState(false);
-  const [flipProgress, setFlipProgress] = useState(0);
+  const [flipProgress, setFlipProgress] = useState(0); // 0=start, 1=kick CSS transition
   const [flipDir, setFlipDir] = useState(null);
+  const [flipSwapped, setFlipSwapped] = useState(false); // true once static pages pre-swap
+  const flipDirRef = useRef(null);       // always-current dir for onTransitionEnd closure
+  const flipDurationRef = useRef(320);   // ms for the CSS transition
+  const midFlipTimerRef = useRef(null);  // setTimeout for pre-swap
   const [dragOverPage, setDragOverPage] = useState(null);
   const [selectedImg, setSelectedImg] = useState(null);
   const [draggingImg, setDraggingImg] = useState(null);
@@ -322,6 +326,14 @@ function Flipbook() {
   const rotateStart = useRef({ angle: 0, origRotation: 0, centerX: 0, centerY: 0 });
 ﻿
   // Live-update: poll /api/version every 60s and soft-reload when a new
+  // Preload cover images so back cover is ready instantly when turning to it.
+  useEffect(() => {
+    ["cover.jpg", "back_cover.jpg"].forEach(src => {
+      const img = new Image();
+      img.src = src;
+    });
+  }, []);
+
   // publish lands. Admins in edit mode are skipped so their unsaved work
   // isn't blown away mid-edit.
   useEffect(() => {
@@ -502,62 +514,58 @@ function Flipbook() {
 ﻿
   const flipQueueRef = useRef([]);
   const lastFlipTime = useRef(0);
-﻿
+
+  // CSS-transition-driven flip: only 3 React state updates per flip instead
+  // of 60. The GPU interpolates the rotateY; onTransitionEnd does cleanup.
+  // This eliminates the React-render/paint race that caused the flash.
+  const finishFlip = useCallback(() => {
+    clearTimeout(midFlipTimerRef.current);
+    const dir = flipDirRef.current;
+    setCurrentSpread(prev => dir === "next" ? prev + 1 : prev - 1);
+    setFlipping(false);
+    setFlipDir(null);
+    setFlipProgress(0);
+    setFlipSwapped(false);
+  }, []);
+
   const flipTo = useCallback((direction) => {
-    // Clear any stale image selection — otherwise uploads after a flip
-    // would still target the previously-selected image's page.
     setSelectedImg(null);
-    // Reset any user zoom so the flip animation plays from the full overview
     setUserZoom(1);
     setPanOffset({ x: 0, y: 0 });
     const now = Date.now();
     const timeSinceLast = now - lastFlipTime.current;
     lastFlipTime.current = now;
-﻿
+
     if (flipping) {
+      // Interrupt in-progress flip: jump straight to completion, no new flip.
       cancelAnimationFrame(animRef.current);
-      setCurrentSpread((prev) => flipDir === "next" ? prev + 1 : prev - 1);
-      setFlipping(false);
-      setFlipDir(null);
-      setFlipProgress(0);
+      finishFlip();
+      return;
     }
-﻿
-    const effectiveSpread = flipping 
-      ? (flipDir === "next" ? currentSpread + 1 : currentSpread - 1)
-      : currentSpread;
-    if (direction === "next" && effectiveSpread >= maxSpread) return;
-    if (direction === "prev" && effectiveSpread <= 0) return;
-﻿
-    const speed = timeSinceLast < 200 ? 80 
-      : timeSinceLast < 400 ? 150 
-      : timeSinceLast < 600 ? 250 
-      : 400;
-﻿
+
+    if (direction === "next" && currentSpread >= maxSpread) return;
+    if (direction === "prev" && currentSpread <= 0) return;
+
+    const duration = timeSinceLast < 300 ? 200
+      : timeSinceLast < 600 ? 270
+      : 340;
+    flipDurationRef.current = duration;
+    flipDirRef.current = direction;
+
     setFlipping(true);
     setFlipDir(direction);
     setFlipProgress(0);
-﻿
-    let start = null;
-    const duration = speed;
-﻿
-    const animate = (timestamp) => {
-      if (!start) start = timestamp;
-      const p = Math.min((timestamp - start) / duration, 1);
-      const eased = p < 0.5
-        ? 4 * p * p * p
-        : 1 - Math.pow(-2 * p + 2, 3) / 2;
-      setFlipProgress(eased);
-      if (p < 1) {
-        animRef.current = requestAnimationFrame(animate);
-      } else {
-        setCurrentSpread((prev) => direction === "next" ? prev + 1 : prev - 1);
-        setFlipping(false);
-        setFlipDir(null);
-        setFlipProgress(0);
-      }
-    };
-    animRef.current = requestAnimationFrame(animate);
-  }, [flipping, flipDir, currentSpread, maxSpread]);
+    setFlipSwapped(false);
+
+    // Two rAFs: let React render the leaf at 0° before kicking the CSS transition.
+    animRef.current = requestAnimationFrame(() => {
+      animRef.current = requestAnimationFrame(() => {
+        setFlipProgress(1); // CSS transition takes over — zero JS frames during spin
+        // Pre-swap static pages at 30% of duration so they're ready when leaf vanishes
+        midFlipTimerRef.current = setTimeout(() => setFlipSwapped(true), duration * 0.3);
+      });
+    });
+  }, [flipping, currentSpread, maxSpread, finishFlip]);
 ﻿
   // Where should uploaded images land? Capture the viewed spread at click time.
   const uploadTargetRef = useRef(null);
@@ -1459,7 +1467,7 @@ function Flipbook() {
     // under the leaf. Fixes the "previous page shows on next page for a
     // sec" flicker that mobile Safari/Chrome exhibit because they
     // sometimes drop the leaf a paint frame before the static updates.
-    const past = flipProgress >= 0.38;
+    const past = flipSwapped;
     if (flipDir === "next") {
       if (currentSpread === 0) {
         staticLeft = destContent.left;
@@ -1500,7 +1508,7 @@ function Flipbook() {
       : 180 * flipProgress
     : 0;
 ﻿
-  const shadowIntensity = flipping ? Math.sin(flipProgress * Math.PI) : 0;
+  const shadowIntensity = flipping ? 0.5 : 0;
 ﻿
   const spreadWidth = PAGE_W * 2;
 ﻿
@@ -2033,16 +2041,21 @@ function Flipbook() {
 ﻿
           {/* === 3D FLIPPING PAGE — NEXT === */}
           {flipping && flipDir === "next" && (
-            <div style={{
-              position: "absolute",
-              left: leavingCover ? 0 : arrivingBack ? PAGE_W : visibleWidth - PAGE_W,
-              top: 0, width: PAGE_W, height: PAGE_H,
-              transformOrigin: "left center",
-              transform: `rotateY(${flipAngle}deg)`,
-              transformStyle: "preserve-3d",
-              willChange: "transform",
-              zIndex: 20, pointerEvents: "none",
-            }}>
+            <div
+              onTransitionEnd={(e) => { if (e.propertyName === "transform") finishFlip(); }}
+              style={{
+                position: "absolute",
+                left: leavingCover ? 0 : arrivingBack ? PAGE_W : visibleWidth - PAGE_W,
+                top: 0, width: PAGE_W, height: PAGE_H,
+                transformOrigin: "left center",
+                transform: `rotateY(${flipAngle}deg)`,
+                transition: flipProgress === 1
+                  ? `transform ${flipDurationRef.current}ms cubic-bezier(0.4, 0, 0.2, 1)`
+                  : "none",
+                transformStyle: "preserve-3d",
+                willChange: "transform",
+                zIndex: 20, pointerEvents: "none",
+              }}>
               {/* Front: the right page being turned away */}
               <div style={{
                 position: "absolute", inset: 0,
@@ -2065,11 +2078,6 @@ function Flipbook() {
                   background: "linear-gradient(to right, rgba(0,0,0,0.25) 0%, transparent 100%)",
                   pointerEvents: "none", zIndex: 30,
                 }} />
-                <div style={{
-                  position: "absolute", inset: 0,
-                  background: `rgba(0,0,0,${Math.max(0, (flipProgress - 0.45) * 0.5)})`,
-                  pointerEvents: "none", zIndex: 31,
-                }} />
               </div>
               {/* Back: revealed as new left page */}
               <div style={{
@@ -2083,27 +2091,27 @@ function Flipbook() {
                 boxShadow: `${6 * shadowIntensity}px 0 ${15 + 20 * shadowIntensity}px rgba(0,0,0,${0.1 + 0.3 * shadowIntensity})`,
               }}>
                 {renderPage(flipBack, "left")}
-                <div style={{
-                  position: "absolute", inset: 0,
-                  background: `rgba(0,0,0,${Math.max(0, (1 - flipProgress - 0.45) * 0.45)})`,
-                  pointerEvents: "none", zIndex: 31,
-                }} />
               </div>
             </div>
           )}
 ﻿
           {/* === 3D FLIPPING PAGE — PREV === */}
           {flipping && flipDir === "prev" && (
-            <div style={{
-              position: "absolute",
-              left: arrivingCover ? -PAGE_W : 0, top: 0,
-              width: PAGE_W, height: PAGE_H,
-              transformOrigin: "right center",
-              transform: `rotateY(${flipAngle}deg)`,
-              transformStyle: "preserve-3d",
-              willChange: "transform",
-              zIndex: 20, pointerEvents: "none",
-            }}>
+            <div
+              onTransitionEnd={(e) => { if (e.propertyName === "transform") finishFlip(); }}
+              style={{
+                position: "absolute",
+                left: arrivingCover ? -PAGE_W : 0, top: 0,
+                width: PAGE_W, height: PAGE_H,
+                transformOrigin: "right center",
+                transform: `rotateY(${flipAngle}deg)`,
+                transition: flipProgress === 1
+                  ? `transform ${flipDurationRef.current}ms cubic-bezier(0.4, 0, 0.2, 1)`
+                  : "none",
+                transformStyle: "preserve-3d",
+                willChange: "transform",
+                zIndex: 20, pointerEvents: "none",
+              }}>
               {/* Front: left page being turned back */}
               <div style={{
                 position: "absolute", inset: 0,
@@ -2126,11 +2134,6 @@ function Flipbook() {
                   background: "linear-gradient(to left, rgba(0,0,0,0.25) 0%, transparent 100%)",
                   pointerEvents: "none", zIndex: 30,
                 }} />
-                <div style={{
-                  position: "absolute", inset: 0,
-                  background: `rgba(0,0,0,${Math.max(0, (flipProgress - 0.45) * 0.5)})`,
-                  pointerEvents: "none", zIndex: 31,
-                }} />
               </div>
               {/* Back: revealed as new right page */}
               <div style={{
@@ -2144,11 +2147,6 @@ function Flipbook() {
                 boxShadow: `${-6 * shadowIntensity}px 0 ${15 + 20 * shadowIntensity}px rgba(0,0,0,${0.1 + 0.3 * shadowIntensity})`,
               }}>
                 {renderPage(flipBack, "right")}
-                <div style={{
-                  position: "absolute", inset: 0,
-                  background: `rgba(0,0,0,${Math.max(0, (1 - flipProgress - 0.45) * 0.45)})`,
-                  pointerEvents: "none", zIndex: 31,
-                }} />
               </div>
             </div>
           )}
