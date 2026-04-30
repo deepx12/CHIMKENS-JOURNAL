@@ -567,170 +567,133 @@ function Flipbook() {
     const target = uploadTargetRef.current; // snapshot from when user clicked +IMG
     let loaded = 0;
     const built = [];
+
+    // Place a new image on a page using a 3-slot grid (TL / C / BR),
+    // choosing the slot farthest from existing image centers.
+    const placeOnPage = (pageImages, im) => {
+      const { _fitW, _fitH, ...clean } = im;
+      const fw = _fitW || clean.w || 300;
+      const fh = _fitH || clean.h || 300;
+      const slots = [
+        { x: 60, y: 60 },
+        { x: (PAGE_W - fw) / 2, y: (PAGE_H - fh) / 2 },
+        { x: PAGE_W - fw - 60, y: PAGE_H - fh - 60 },
+      ];
+      const existing = pageImages || [];
+      let bestIdx = 0, bestDist = -1;
+      slots.forEach((s, si) => {
+        const sx = s.x + fw / 2, sy = s.y + fh / 2;
+        const minD = existing.length === 0 ? Infinity : Math.min(
+          ...existing.map(ex2 => Math.hypot(sx - (ex2.x + ex2.w / 2), sy - (ex2.y + ex2.h / 2)))
+        );
+        if (minD > bestDist) { bestDist = minD; bestIdx = si; }
+      });
+      const chosen = slots[bestIdx];
+      const jx = (existing.length % 3) * 14;
+      const jy = (existing.length % 3) * 10;
+      return {
+        ...clean,
+        x: Math.max(20, Math.min(PAGE_W - fw - 20, chosen.x + jx)),
+        y: Math.max(20, Math.min(PAGE_H - fh - 20, chosen.y + jy)),
+      };
+    };
+
+    // Distribute images starting at startIdx, capped at 3 per page.
+    const IMG_CAP = 3;
+    const distribute = (prevPages, startIdx, imgs2) => {
+      const next = prevPages.map(p => ({ ...p, images: [...(p.images || [])] }));
+      let curIdx = startIdx;
+      let firstSpread = null;
+      const remaining = [...imgs2];
+      while (remaining.length) {
+        while (curIdx >= next.length) { next.push({ images: [] }); next.push({ images: [] }); }
+        const pg = next[curIdx];
+        const room = IMG_CAP - pg.images.length;
+        if (room <= 0) { curIdx++; continue; }
+        remaining.splice(0, room).forEach(im => pg.images.push(placeOnPage(pg.images, im)));
+        if (firstSpread === null) firstSpread = Math.floor(curIdx / 2) + 1;
+        if (remaining.length) curIdx++;
+      }
+      return [next, firstSpread];
+    };
+
+    // Called once all file readers + image decoders have finished.
+    const finalize = (imgs) => {
+      if (imgs.length === 0) {
+        alert("Could not read the selected image(s).\nPlease use JPG, PNG, GIF, or WebP.");
+        return;
+      }
+      if (target && target.kind === "ipad") {
+        const pieces = imgs.map(im => ({ id: im.id, src: im.src, title: "" }));
+        setIpadArt(prev => {
+          const next2 = [...prev, ...pieces];
+          setTimeout(() => setIpadIdx(prev.length), 50);
+          return next2;
+        });
+      } else if (target && target.kind === "cover") {
+        setCoverPage(prev => {
+          const placed = [];
+          const working = [...prev.images];
+          imgs.forEach(im => { const p = placeOnPage(working, im); placed.push(p); working.push(p); });
+          return { ...prev, images: [...prev.images, ...placed] };
+        });
+      } else if (target && target.kind === "append") {
+        setPages(prev => {
+          const [updated, ts] = distribute(prev, prev.length, imgs);
+          if (ts !== null) setTimeout(() => setCurrentSpread(ts), 50);
+          return updated;
+        });
+      } else if (target && target.kind === "page") {
+        setPages(prev => {
+          const pageIdx = target.pageIdx;
+          if (pageIdx < 0) return prev;
+          const next2 = prev.map(p => ({ ...p, images: [...(p.images || [])] }));
+          while (next2.length <= pageIdx) { next2.push({ images: [] }); next2.push({ images: [] }); }
+          imgs.forEach(im => next2[pageIdx].images.push(placeOnPage(next2[pageIdx].images, im)));
+          return next2;
+        });
+      } else {
+        // Fallback — append to end
+        setPages(prev => {
+          const [updated, ts] = distribute(prev, prev.length, imgs);
+          if (ts !== null) setTimeout(() => setCurrentSpread(ts), 50);
+          return updated;
+        });
+      }
+    };
+
     files.forEach((file, i) => {
       const reader = new FileReader();
       reader.onload = (ev) => {
-        const img = new Image();
-        img.onload = () => {
-          const aspect = img.width / img.height;
+        const imgEl = new Image();
+        imgEl.onload = () => {
+          const aspect = (imgEl.width || 1) / (imgEl.height || 1);
           const fitW = Math.min(600, PAGE_W - 100);
           const fitH = fitW / aspect;
-          // Compress: downscale to max 1600px on long edge (1200 for PNG to keep
-          // sizes manageable) and encode as JPEG unless the file is PNG — PNGs
-          // may have transparent backgrounds (stickers/cutouts) that must be kept.
           const isPng = file.type === "image/png";
           const MAX = isPng ? 850 : 1100;
-          const longEdge = Math.max(img.width, img.height);
+          const longEdge = Math.max(imgEl.width, imgEl.height) || 1;
           const scale = longEdge > MAX ? MAX / longEdge : 1;
-          const cw = Math.round(img.width * scale);
-          const ch = Math.round(img.height * scale);
+          const cw = Math.round(imgEl.width * scale) || 1;
+          const ch = Math.round(imgEl.height * scale) || 1;
           const canvas = document.createElement("canvas");
           canvas.width = cw; canvas.height = ch;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, cw, ch);
-          let compressed;
+          canvas.getContext("2d").drawImage(imgEl, 0, 0, cw, ch);
+          let src;
           try {
-            compressed = isPng
-              ? canvas.toDataURL("image/png")
-              : canvas.toDataURL("image/jpeg", 0.74);
-            // If encoding ended up bigger than the original, keep original
-            if (compressed.length > ev.target.result.length) compressed = ev.target.result;
-          } catch (err) {
-            compressed = ev.target.result;
-          }
-          const newImg = {
-            src: compressed,
-            _fitW: fitW, _fitH: fitH, // temp so we can position later
-            x: 0, y: 0,
-            w: fitW, h: fitH, rotation: 0,
-            id: Date.now() + Math.random() + i,
-          };
-          built[i] = newImg;
+            src = isPng ? canvas.toDataURL("image/png") : canvas.toDataURL("image/jpeg", 0.74);
+            if (src.length > ev.target.result.length) src = ev.target.result;
+          } catch { src = ev.target.result; }
+          built[i] = { src, _fitW: fitW, _fitH: fitH, x: 0, y: 0, w: fitW, h: fitH, rotation: 0, id: Date.now() + Math.random() + i };
           loaded++;
-          if (loaded === files.length) {
-            const imgs = built.filter(Boolean);
-            const IMG_CAP_PER_PAGE = 3;
-            // Place a new image on a page: finds an uncrowded slot so the
-            // photo is always visible, never buried directly on top of
-            // existing ones. Uses a 3-position layout grid (TL / C / BR)
-            // picking whichever is least occupied.
-            const placeOnPage = (pageImages, img) => {
-              const { _fitW, _fitH, ...clean } = img;
-              const slots = [
-                { x: 60, y: 60 },                                          // top-left
-                { x: (PAGE_W - _fitW) / 2, y: (PAGE_H - _fitH) / 2 },       // center
-                { x: PAGE_W - _fitW - 60, y: PAGE_H - _fitH - 60 },         // bottom-right
-              ];
-              // Choose the slot farthest from any existing image center.
-              const existing = pageImages || [];
-              let bestIdx = 0, bestDist = -1;
-              slots.forEach((s, i) => {
-                const sx = s.x + _fitW / 2, sy = s.y + _fitH / 2;
-                const minD = existing.length === 0 ? Infinity : Math.min(
-                  ...existing.map(e => {
-                    const ex = e.x + e.w / 2, ey = e.y + e.h / 2;
-                    return Math.hypot(sx - ex, sy - ey);
-                  })
-                );
-                if (minD > bestDist) { bestDist = minD; bestIdx = i; }
-              });
-              const chosen = slots[bestIdx];
-              // Small deterministic jitter so multiple uploads in the same
-              // slot are still individually visible.
-              const jx = (existing.length % 3) * 14;
-              const jy = (existing.length % 3) * 10;
-              return {
-                ...clean,
-                x: Math.max(20, Math.min(PAGE_W - _fitW - 20, chosen.x + jx)),
-                y: Math.max(20, Math.min(PAGE_H - _fitH - 20, chosen.y + jy)),
-              };
-            };
-
-            // Distribute a list of images into pages starting from startIdx.
-            // Fills each page up to IMG_CAP_PER_PAGE, then moves on. Auto-
-            // extends the pages array in pairs if it runs off the end.
-            // Returns [newPagesArray, firstTargetSpread].
-            const distribute = (prevPages, startIdx, imagesToPlace) => {
-              let next = prevPages.map(p => ({ ...p, images: [...(p.images || [])] }));
-              let curIdx = startIdx;
-              let firstTargetSpread = null;
-              let remaining = [...imagesToPlace];
-              while (remaining.length) {
-                // Extend in pairs so the book stays evenly paginated.
-                while (curIdx >= next.length) {
-                  next.push({ images: [] });
-                  next.push({ images: [] });
-                }
-                const pg = next[curIdx];
-                const room = IMG_CAP_PER_PAGE - pg.images.length;
-                if (room <= 0) { curIdx++; continue; }
-                const take = remaining.splice(0, room);
-                take.forEach(im => {
-                  pg.images.push(placeOnPage(pg.images, im));
-                });
-                if (firstTargetSpread === null) {
-                  firstTargetSpread = Math.floor(curIdx / 2) + 1;
-                }
-                if (remaining.length) curIdx++;
-              }
-              return [next, firstTargetSpread];
-            };
-
-            if (target && target.kind === "ipad") {
-              // iPad art: simple append as full-frame pieces. Strip layout fields.
-              const cleanPieces = imgs.map(im => ({
-                id: im.id, src: im.src, title: "",
-              }));
-              setIpadArt(prev => {
-                const next = [...prev, ...cleanPieces];
-                // Jump to the first newly added piece
-                setTimeout(() => setIpadIdx(prev.length), 50);
-                return next;
-              });
-            } else if (target && target.kind === "cover") {
-              setCoverPage(prev => {
-                const placed = [];
-                const working = [...prev.images];
-                imgs.forEach(im => {
-                  const p = placeOnPage(working, im);
-                  placed.push(p); working.push(p);
-                });
-                return { ...prev, images: [...prev.images, ...placed] };
-              });
-            } else if (target && target.kind === "append") {
-              // User was on the back cover — distribute onto fresh pages
-              // appended to the end, then jump to that spread.
-              setPages(prev => {
-                const startIdx = prev.length;
-                const [updated, targetSpread] = distribute(prev, startIdx, imgs);
-                if (targetSpread !== null) {
-                  setTimeout(() => setCurrentSpread(targetSpread), 50);
-                }
-                return updated;
-              });
-            } else if (target && target.kind === "page") {
-              // Place images directly on the chosen page — no spill to neighbours.
-              setPages(prev => {
-                const pageIdx = target.pageIdx;
-                if (pageIdx < 0) return prev;
-                const next = prev.map(p => ({ ...p, images: [...(p.images || [])] }));
-                while (next.length <= pageIdx) { next.push({ images: [] }); next.push({ images: [] }); }
-                imgs.forEach(im => { next[pageIdx].images.push(placeOnPage(next[pageIdx].images, im)); });
-                return next;
-              });
-            } else {
-              // Fallback: append at end
-              setPages(prev => {
-                const [updated, targetSpread] = distribute(prev, prev.length, imgs);
-                if (targetSpread !== null) {
-                  setTimeout(() => setCurrentSpread(targetSpread), 50);
-                }
-                return updated;
-              });
-            }
-          }
+          if (loaded === files.length) finalize(built.filter(Boolean));
         };
-        img.src = ev.target.result;
+        imgEl.onerror = () => {
+          // Skip undecordable files (e.g. HEIC on Chrome/Windows)
+          loaded++;
+          if (loaded === files.length) finalize(built.filter(Boolean));
+        };
+        imgEl.src = ev.target.result;
       };
       reader.readAsDataURL(file);
     });
@@ -2385,7 +2348,7 @@ function Flipbook() {
         }}>
           <button onClick={() => {
             uploadTargetRef.current = { kind: "ipad" };
-            fileRef.current.click();
+            if (fileRef.current) fileRef.current.click();
           }} style={{
             background: "rgba(30,60,100,0.9)", backdropFilter: "blur(8px)",
             border: "1.5px solid rgba(100,160,220,0.35)",
@@ -2454,7 +2417,7 @@ function Flipbook() {
         }}>RESET</button>}
 
         {isEditMode && (currentSpread === 0 ? (
-          <button onClick={() => { uploadTargetRef.current = { kind: "cover" }; fileRef.current.click(); }}
+          <button onClick={() => { uploadTargetRef.current = { kind: "cover" }; if (fileRef.current) fileRef.current.click(); }}
             style={{
               background: "rgba(20,14,8,0.82)", backdropFilter: "blur(8px)",
               border: "1.5px solid rgba(40,28,14,0.2)", color: "rgba(245,235,220,0.85)",
@@ -2463,7 +2426,7 @@ function Flipbook() {
               boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
             }}>{isMobile ? "+ IMG" : "+ IMG TO COVER"}</button>
         ) : currentSpread >= maxSpread ? (
-          <button onClick={() => { uploadTargetRef.current = { kind: "append" }; fileRef.current.click(); }}
+          <button onClick={() => { uploadTargetRef.current = { kind: "append" }; if (fileRef.current) fileRef.current.click(); }}
             style={{
               background: "rgba(20,14,8,0.82)", backdropFilter: "blur(8px)",
               border: "1.5px solid rgba(40,28,14,0.2)", color: "rgba(245,235,220,0.85)",
@@ -2473,7 +2436,7 @@ function Flipbook() {
             }}>{isMobile ? "+ NEW" : "+ NEW SPREAD"}</button>
         ) : (
           <>
-            <button onClick={() => { uploadTargetRef.current = { kind: "page", pageIdx: (currentSpread - 1) * 2 }; fileRef.current.click(); }}
+            <button onClick={() => { uploadTargetRef.current = { kind: "page", pageIdx: (currentSpread - 1) * 2 }; if (fileRef.current) fileRef.current.click(); }}
               style={{
                 background: "rgba(20,14,8,0.82)", backdropFilter: "blur(8px)",
                 border: "1.5px solid rgba(40,28,14,0.2)", color: "rgba(245,235,220,0.85)",
@@ -2482,7 +2445,7 @@ function Flipbook() {
                 boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
               }}>{isMobile ? `+L${(currentSpread-1)*2+1}` : `+ LEFT (pg ${(currentSpread-1)*2+1})`}</button>
             {(currentSpread - 1) * 2 + 1 < pages.length && (
-              <button onClick={() => { uploadTargetRef.current = { kind: "page", pageIdx: (currentSpread - 1) * 2 + 1 }; fileRef.current.click(); }}
+              <button onClick={() => { uploadTargetRef.current = { kind: "page", pageIdx: (currentSpread - 1) * 2 + 1 }; if (fileRef.current) fileRef.current.click(); }}
                 style={{
                   background: "rgba(20,14,8,0.82)", backdropFilter: "blur(8px)",
                   border: "1.5px solid rgba(40,28,14,0.2)", color: "rgba(245,235,220,0.85)",
@@ -2552,7 +2515,7 @@ function Flipbook() {
             // limits, or pasted as a raw data URL). JPEG only — PNGs may have
             // transparency we must not lose by converting.
             const squeezeImg = (src) => new Promise((res) => {
-              if (!src || src.length < 350_000) { res(src); return; }
+              if (!src || src.length < 350000) { res(src); return; }
               const isJpeg = src.startsWith("data:image/jpeg") || src.startsWith("data:image/jpg");
               const isPngSrc = src.startsWith("data:image/png");
               if (!isJpeg && !isPngSrc) { res(src); return; }
@@ -2640,7 +2603,7 @@ function Flipbook() {
           }}>{"→"}</button>
       </div>
 ﻿
-      {isEditMode && <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }}
+      {isEditMode && <input ref={fileRef} type="file" accept="image/jpeg,image/jpg,image/png,image/gif,image/webp,image/svg+xml" multiple style={{ display: "none" }}
         onChange={handleFileUpload} />}
 ﻿
 
