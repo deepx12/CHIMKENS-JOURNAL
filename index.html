@@ -1534,8 +1534,8 @@ function Flipbook() {
       if (mobile) {
         // Fit the full spread (both pages). Tablets have more vertical
         // room, so we give the controls a bit more breathing space.
-        const controlsH = tablet ? 88 : 72;
-        const sideMargin = tablet ? 0.92 : 0.96;
+        const controlsH = tablet ? 96 : 80;
+        const sideMargin = tablet ? 0.88 : 0.92;
         const maxW = window.innerWidth * sideMargin;
         const maxH = window.innerHeight - controlsH;
         setViewScale(Math.min(maxW / spreadWidth, maxH / PAGE_H, 1));
@@ -2541,7 +2541,7 @@ function Flipbook() {
 
         {/* Zoom in / out — scale selected image by ±20% per tap */}
         {isEditMode && selectedImg && (
-          <button onClick={() => zoomSelectedImage(1.2)} style={{
+          <button onClick={() => zoomSelectedImage(1.1)} style={{
             background: "rgba(20,50,20,0.88)", backdropFilter: "blur(8px)",
             border: "1.5px solid rgba(40,130,40,0.3)", color: "rgba(200,255,200,0.95)",
             padding: isMobile ? "14px 16px" : "10px 18px", borderRadius: 8, cursor: "pointer",
@@ -2550,7 +2550,7 @@ function Flipbook() {
           }}>＋</button>
         )}
         {isEditMode && selectedImg && (
-          <button onClick={() => zoomSelectedImage(0.8)} style={{
+          <button onClick={() => zoomSelectedImage(0.9)} style={{
             background: "rgba(50,20,20,0.88)", backdropFilter: "blur(8px)",
             border: "1.5px solid rgba(130,40,40,0.3)", color: "rgba(255,200,200,0.95)",
             padding: isMobile ? "14px 16px" : "10px 18px", borderRadius: 8, cursor: "pointer",
