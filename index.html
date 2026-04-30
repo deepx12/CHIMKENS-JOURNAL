@@ -2235,7 +2235,7 @@ function Flipbook() {
             }}
             style={{
               position: "absolute", inset: 0,
-              display: "flex", alignItems: "center", justifyContent: "center",
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
               zIndex: 15,
               transform: isEntering
                 ? "translateY(0) scale(1)"
@@ -2295,18 +2295,6 @@ function Flipbook() {
                   background: "linear-gradient(135deg, rgba(255,255,255,0.05) 0%, transparent 40%, transparent 100%)",
                   pointerEvents: "none",
                 }} />
-                {/* Counter */}
-                {ipadArt.length > 0 && (
-                  <div style={{
-                    position: "absolute", bottom: 10, right: 14,
-                    color: "rgba(255,255,255,0.45)",
-                    fontFamily: "'Space Mono', monospace",
-                    fontSize: 10, letterSpacing: 2,
-                    background: "rgba(0,0,0,0.35)",
-                    padding: "3px 8px", borderRadius: 10,
-                    backdropFilter: "blur(4px)",
-                  }}>{ipadIdx + 1} / {ipadArt.length}</div>
-                )}
               </div>
               {/* Home bar indicator (bottom) */}
               <div style={{
@@ -2316,34 +2304,34 @@ function Flipbook() {
               }} />
             </div>
 
-            {/* iPad nav arrows */}
+            {/* iPad nav arrows — sit below the device frame, never over the art */}
             {ipadArt.length > 1 && (
-              <>
+              <div style={{
+                display: "flex", gap: 16, alignItems: "center", justifyContent: "center",
+                marginTop: 14, zIndex: 16,
+              }}>
                 <button onClick={ipadPrev} disabled={ipadIdx === 0} style={{
-                  position: "absolute", left: isMobile ? 12 : 40,
-                  top: "50%", transform: "translateY(-50%)",
-                  width: isMobile ? 48 : 54, height: isMobile ? 48 : 54, borderRadius: "50%",
+                  width: 48, height: 48, borderRadius: "50%",
                   background: "rgba(20,14,8,0.82)", backdropFilter: "blur(8px)",
                   border: "1.5px solid rgba(255,255,255,0.12)",
-                  color: ipadIdx === 0 ? "rgba(255,255,255,0.25)" : "rgba(245,235,220,0.95)",
-                  fontSize: 22, cursor: ipadIdx === 0 ? "default" : "pointer",
+                  color: ipadIdx === 0 ? "rgba(255,255,255,0.2)" : "rgba(245,235,220,0.95)",
+                  fontSize: 20, cursor: ipadIdx === 0 ? "default" : "pointer",
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
-                  zIndex: 16,
+                  boxShadow: ipadIdx === 0 ? "none" : "0 4px 14px rgba(0,0,0,0.35)",
                 }}>←</button>
+                <span style={{ color: "rgba(255,255,255,0.4)", fontFamily: "'Space Mono',monospace", fontSize: 11, letterSpacing: 2 }}>
+                  {ipadIdx + 1} / {ipadArt.length}
+                </span>
                 <button onClick={ipadNext} disabled={ipadIdx >= ipadArt.length - 1} style={{
-                  position: "absolute", right: isMobile ? 12 : 40,
-                  top: "50%", transform: "translateY(-50%)",
-                  width: isMobile ? 48 : 54, height: isMobile ? 48 : 54, borderRadius: "50%",
+                  width: 48, height: 48, borderRadius: "50%",
                   background: "rgba(20,14,8,0.82)", backdropFilter: "blur(8px)",
                   border: "1.5px solid rgba(255,255,255,0.12)",
-                  color: ipadIdx >= ipadArt.length - 1 ? "rgba(255,255,255,0.25)" : "rgba(245,235,220,0.95)",
-                  fontSize: 22, cursor: ipadIdx >= ipadArt.length - 1 ? "default" : "pointer",
+                  color: ipadIdx >= ipadArt.length - 1 ? "rgba(255,255,255,0.2)" : "rgba(245,235,220,0.95)",
+                  fontSize: 20, cursor: ipadIdx >= ipadArt.length - 1 ? "default" : "pointer",
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
-                  zIndex: 16,
+                  boxShadow: ipadIdx >= ipadArt.length - 1 ? "none" : "0 4px 14px rgba(0,0,0,0.35)",
                 }}>→</button>
-              </>
+              </div>
             )}
 
             {/* (The top segmented header already labels this view.) */}
