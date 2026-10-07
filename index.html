@@ -216,6 +216,12 @@ const { useState, useRef, useCallback, useEffect } = React;
 ﻿
 const BG_DATA = "bg_original.jpg";
 const DEFAULT_BG_LAYOUT = { scale: 100, x: 50, y: 0 };
+// Brisk start with a short settle. The old expo-out curve did ~85% of the
+// turn in the first third, then crawled — which read as lag on phones.
+const FLIP_EASING = "cubic-bezier(0.3, 0.6, 0.25, 1)";
+// Static pages swap to the destination once the leaf has passed vertical
+// (~0.8 progress at this point on FLIP_EASING), so the swap stays hidden.
+const FLIP_SWAP_AT = 0.45;
 const MIN_USER_ZOOM = 0.5;
 const MAX_USER_ZOOM = 3.5;
 ﻿
@@ -555,6 +561,29 @@ function Flipbook() {
     setDragOverPage(null);
   }, []);
 ﻿
+  // Decode the neighbouring spreads' artwork ahead of time. Pages hold large
+  // inline images; decoding them only when a flip mounts the leaf stalled
+  // the first frames of the turn on phones/iPads.
+  const decodedImgsRef = useRef(new Map());
+  useEffect(() => {
+    const wanted = new Set();
+    for (let s = currentSpread - 2; s <= currentSpread + 2; s++) {
+      if (s < 0 || s > maxSpread) continue;
+      const { left, right } = getSpreadContent(s);
+      [left, right].forEach(c => (c && c.images || []).forEach(im => im.src && wanted.add(im.src)));
+    }
+    const cache = decodedImgsRef.current;
+    wanted.forEach(src => {
+      if (cache.has(src)) return;
+      const img = new Image();
+      img.src = src;
+      if (img.decode) img.decode().catch(() => {});
+      cache.set(src, img);
+    });
+    // Release spreads we've moved away from so memory stays bounded.
+    [...cache.keys()].forEach(src => { if (!wanted.has(src)) cache.delete(src); });
+  }, [currentSpread, maxSpread, pages, coverPage]);
+
   const flipQueueRef = useRef([]);
   const lastFlipTime = useRef(0);
 
@@ -574,7 +603,6 @@ function Flipbook() {
   const flipTo = useCallback((direction) => {
     setSelectedImg(null);
     setUserZoom(z => Math.min(z, 1)); // drop zoom-in, keep a zoomed-out view
-    setPanOffset({ x: 0, y: 0 });
     setPanOffset({ x: 0, y: 0 });
     const now = Date.now();
     const timeSinceLast = now - lastFlipTime.current;
@@ -608,8 +636,8 @@ function Flipbook() {
     animRef.current = requestAnimationFrame(() => {
       animRef.current = requestAnimationFrame(() => {
         setFlipProgress(1); // CSS transition takes over — zero JS frames during spin
-        // Pre-swap static pages at 30% of duration so they're ready when leaf vanishes
-        midFlipTimerRef.current = setTimeout(() => setFlipSwapped(true), duration * 0.3);
+        // Pre-swap static pages once the leaf covers them, so they're ready when it vanishes
+        midFlipTimerRef.current = setTimeout(() => setFlipSwapped(true), duration * FLIP_SWAP_AT);
       });
     });
   }, [flipping, currentSpread, maxSpread, finishFlip]);
@@ -2084,8 +2112,11 @@ function Flipbook() {
           borderRadius: 10,
           position: "relative",
           overflow: "visible",
+          // `perspective` still gives the turning leaf depth, but children are
+          // NOT depth-sorted together (no preserve-3d). Otherwise WebKit sorts
+          // by 3D depth, ignores z-index, and the curved static pages (±6°)
+          // poke through the leaf as it lands — the page behind shows.
           perspective: 2500,
-          transformStyle: "preserve-3d",
           background: "transparent",
         }}>
 ﻿
@@ -2280,7 +2311,7 @@ function Flipbook() {
                 transformOrigin: "left center",
                 transform: `rotateY(${flipAngle}deg)`,
                 transition: flipProgress === 1
-                  ? `transform ${flipDurationRef.current}ms cubic-bezier(0.16, 1, 0.3, 1)`
+                  ? `transform ${flipDurationRef.current}ms ${FLIP_EASING}`
                   : "none",
                 transformStyle: "preserve-3d",
                 willChange: "transform",
@@ -2336,7 +2367,7 @@ function Flipbook() {
                 transformOrigin: "right center",
                 transform: `rotateY(${flipAngle}deg)`,
                 transition: flipProgress === 1
-                  ? `transform ${flipDurationRef.current}ms cubic-bezier(0.16, 1, 0.3, 1)`
+                  ? `transform ${flipDurationRef.current}ms ${FLIP_EASING}`
                   : "none",
                 transformStyle: "preserve-3d",
                 willChange: "transform",
