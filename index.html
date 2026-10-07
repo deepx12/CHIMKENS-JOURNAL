@@ -215,6 +215,7 @@
 const { useState, useRef, useCallback, useEffect } = React;
 ﻿
 const BG_DATA = "bg_original.jpg";
+const DEFAULT_BG_LAYOUT = { scale: 100, x: 50, y: 0 };
 ﻿
 ﻿
 ﻿
@@ -261,6 +262,16 @@ function Flipbook() {
       .filter(a => a && typeof a.src === "string")
       .map(a => ({ id: a.id || (Date.now() + Math.random()), src: a.src, title: a.title || "" }));
   };
+  // Background zoom (%) and focal point (background-position %).
+  const sanitizeBgLayout = (l) => {
+    const num = (v, min, max, d) => (Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : d);
+    if (!l || typeof l !== "object") return { ...DEFAULT_BG_LAYOUT };
+    return {
+      scale: num(l.scale, 50, 300, DEFAULT_BG_LAYOUT.scale),
+      x: num(l.x, 0, 100, DEFAULT_BG_LAYOUT.x),
+      y: num(l.y, 0, 100, DEFAULT_BG_LAYOUT.y),
+    };
+  };
   const sanitizeState = (s) => {
     if (!s || typeof s !== "object") return null;
     return {
@@ -268,6 +279,7 @@ function Flipbook() {
       coverPage: sanitizePage(s.coverPage),
       ipadArt: sanitizeIpadArt(s.ipadArt),
       background: typeof s.background === "string" && s.background ? s.background : BG_DATA,
+      bgLayout: sanitizeBgLayout(s.bgLayout),
     };
   };
   const loadSaved = () => {
@@ -320,6 +332,9 @@ function Flipbook() {
     savedData.current?.ipadArt || []
   );
   const [background, setBackground] = useState(savedData.current?.background || BG_DATA);
+  const [bgLayout, setBgLayout] = useState(savedData.current?.bgLayout || { ...DEFAULT_BG_LAYOUT });
+  const [bgDraft, setBgDraft] = useState(null); // live preview while the BG SIZE panel is open
+  const shownBgLayout = bgDraft || bgLayout;
   const [mode, setMode] = useState("book"); // 'book' | 'ipad'
   const [modeTransition, setModeTransition] = useState(null); // null | 'to-ipad' | 'to-book'
   const [ipadIdx, setIpadIdx] = useState(0);
@@ -404,13 +419,13 @@ function Flipbook() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       try {
-        localStorage.setItem("flipbook-data", JSON.stringify({ pages, coverPage, ipadArt, background }));
+        localStorage.setItem("flipbook-data", JSON.stringify({ pages, coverPage, ipadArt, background, bgLayout }));
       } catch (e) {
         console.warn("Save failed — storage may be full", e);
       }
     }, 500); // debounce 500ms
     return () => clearTimeout(saveTimer.current);
-  }, [pages, coverPage, ipadArt, background]);
+  }, [pages, coverPage, ipadArt, background, bgLayout]);
 ﻿
   // Number of spreads: cover + ceil(contentPages/2) + back
   // Book grows with the pages array — each spread holds 2 page sides,
@@ -1007,6 +1022,9 @@ function Flipbook() {
   useEffect(() => {
     const handleKey = (e) => {
       if (e.key === "Escape") { setSelectedImg(null); return; }
+      // Let sliders and number fields keep their own arrow/backspace keys.
+      const tag = e.target && e.target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       // Edit-only shortcuts (undo, delete) are gated behind isEditMode.
       if (isEditMode && (e.ctrlKey || e.metaKey) && e.key === "z") {
         e.preventDefault();
@@ -1885,16 +1903,19 @@ function Flipbook() {
     onTouchEnd={handleTouchEnd}
     >
       {/* Paper background */}
-      <div style={{
-        position: "absolute", inset: 0,
-        backgroundImage: `url(${background})`,
-        backgroundSize: "cover",
-        backgroundPosition: "center top",
-        backgroundRepeat: "no-repeat",
-        opacity: 0.92,
-        zIndex: 0,
-        pointerEvents: "none",
-      }} />
+      <div style={{ position: "absolute", inset: 0, overflow: "hidden", zIndex: 0, pointerEvents: "none" }}>
+        <div style={{
+          position: "absolute", inset: 0,
+          backgroundImage: `url(${background})`,
+          backgroundSize: "cover",
+          backgroundPosition: `${shownBgLayout.x}% ${shownBgLayout.y}%`,
+          backgroundRepeat: "no-repeat",
+          // Zoom around the chosen focal point so it stays put while resizing.
+          transform: `scale(${shownBgLayout.scale / 100})`,
+          transformOrigin: `${shownBgLayout.x}% ${shownBgLayout.y}%`,
+          opacity: 0.92,
+        }} />
+      </div>
 
 <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Instrument+Serif&display=swap');
@@ -2595,6 +2616,14 @@ function Flipbook() {
           boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
         }}>BG</button>}
 
+        {isEditMode && <button onClick={() => setBgDraft(bgDraft ? null : { ...bgLayout })} style={{
+          background: bgDraft ? "rgba(60,95,125,0.95)" : "rgba(25,50,72,0.88)", backdropFilter: "blur(8px)",
+          border: "1.5px solid rgba(100,175,220,0.35)", color: "rgba(220,245,255,0.96)",
+          padding: isMobile ? "14px 12px" : "10px 16px", borderRadius: 8, cursor: "pointer",
+          fontSize: isMobile ? 10 : 11, letterSpacing: 2,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
+        }}>BG SIZE</button>}
+
         {isEditMode && background !== BG_DATA && <button onClick={() => setBackground(BG_DATA)} style={{
           background: "rgba(75,65,35,0.88)", backdropFilter: "blur(8px)",
           border: "1.5px solid rgba(180,150,80,0.32)", color: "rgba(255,240,195,0.96)",
@@ -2801,7 +2830,7 @@ function Flipbook() {
               squeezePage(coverPage),
               Promise.all(ipadArt.map(async art => ({ ...art, src: await squeezeImg(art.src) }))),
             ]);
-            const state = { pages: sqPages, coverPage: sqCover, ipadArt: sqIpad, background };
+            const state = { pages: sqPages, coverPage: sqCover, ipadArt: sqIpad, background, bgLayout };
             const body = JSON.stringify({ password: pwd, state });
             // Vercel serverless functions cap request bodies around 4.5MB.
             const mb = body.length / (1024 * 1024);
@@ -2879,6 +2908,18 @@ function Flipbook() {
 
       {isEditMode && <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }}
         onChange={handleFileUpload} />}
+      {isEditMode && bgDraft && <div className="canva-glass" style={{ position: "fixed", top: isMobile ? 16 : 82, left: isMobile ? 16 : 20, right: isMobile ? 16 : "auto", zIndex: 80, width: isMobile ? "auto" : 240, borderRadius: 18, padding: 16, color: "#1e293b", fontFamily: "'Space Mono', monospace" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.3, marginBottom: 14 }}>BACKGROUND SIZE</div>
+        {[['SIZE', 'scale', 50, 300, '%'], ['LEFT/RIGHT', 'x', 0, 100, '%'], ['UP/DOWN', 'y', 0, 100, '%']].map(([label, key, min, max, unit]) => <label key={key} style={{ display: 'block', fontSize: 10, marginBottom: 12 }}>
+          <span style={{ color: '#64748b' }}>{label}</span><b style={{ float: 'right', color: '#334155' }}>{Math.round(bgDraft[key])}{unit}</b>
+          <input type="range" min={min} max={max} step="1" value={bgDraft[key]} onChange={e => { const n = Number(e.target.value); setBgDraft(d => ({ ...d, [key]: n })); }} style={{ width: '100%', accentColor: '#8B5CF6', marginTop: 4 }} />
+        </label>)}
+        <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+          <button className="canva-icon-button" onClick={() => setBgDraft({ ...DEFAULT_BG_LAYOUT })}>Reset</button>
+          <button className="canva-icon-button" onClick={() => setBgDraft(null)} style={{ marginLeft: 'auto' }}>Cancel</button>
+          <button className="canva-icon-button" onClick={() => { setBgLayout(bgDraft); setBgDraft(null); }} style={{ background: '#8B5CF6', color: '#fff' }}>Apply</button>
+        </div>
+      </div>}
       {isEditMode && <input ref={backgroundFileRef} type="file" accept="image/*" style={{ display: "none" }}
         onChange={handleBackgroundUpload} />}
 ﻿
