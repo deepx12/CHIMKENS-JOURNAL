@@ -222,6 +222,11 @@ const FLIP_EASING = "cubic-bezier(0.3, 0.6, 0.25, 1)";
 // Static pages swap to the destination once the leaf has passed vertical
 // (~0.8 progress at this point on FLIP_EASING), so the swap stays hidden.
 const FLIP_SWAP_AT = 0.45;
+// Fraction of the duration at which the leaf is edge-on (90°) on FLIP_EASING.
+// iOS/iPadOS WebKit doesn't apply backface-visibility to a face's composited
+// children (images, shadows), so the turned-away face stays visible mirrored.
+// Each face is therefore switched off/on by opacity exactly at this moment.
+const FLIP_HALF_AT = 0.215;
 const MIN_USER_ZOOM = 0.5;
 const MAX_USER_ZOOM = 3.5;
 ﻿
@@ -1648,6 +1653,11 @@ function Flipbook() {
     : 0;
 ﻿
   const shadowIntensity = flipping ? 0.5 : 0;
+
+  // Swap leaf faces at edge-on (see FLIP_HALF_AT); starts with the transition.
+  const leafHalfDelay = Math.round(flipDurationRef.current * FLIP_HALF_AT);
+  const leafFrontAnim = flipProgress === 1 ? { animation: `leafFaceOut 1ms linear ${leafHalfDelay}ms forwards` } : {};
+  const leafBackAnim = flipProgress === 1 ? { animation: `leafFaceIn 1ms linear ${leafHalfDelay}ms both` } : { opacity: 0 };
 ﻿
   const spreadWidth = PAGE_W * 2;
 ﻿
@@ -2034,6 +2044,8 @@ function Flipbook() {
           40% { box-shadow: 0 22px 70px rgba(0,0,0,0.55), 0 0 80px rgba(120,180,255,0.55); }
           100% { box-shadow: 0 22px 70px rgba(0,0,0,0.55), 0 0 30px rgba(120,180,255,0.18); }
         }
+        @keyframes leafFaceOut { to { opacity: 0; } }
+        @keyframes leafFaceIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes canvaSelectionIn { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: scale(1); } }
         @keyframes canvaHandleIn { from { opacity: 0; transform: scale(.45); } to { opacity: 1; transform: scale(1); } }
         .canva-selected { animation: canvaSelectionIn 150ms ease-out; filter: drop-shadow(0 7px 14px rgba(139,92,246,.2)); }
@@ -2322,6 +2334,7 @@ function Flipbook() {
                 position: "absolute", inset: 0,
                 backfaceVisibility: "hidden",
                 WebkitBackfaceVisibility: "hidden",
+                ...leafFrontAnim,
                 borderRadius: "0 10px 10px 0",
                 overflow: "hidden",
                 background: "#f5f4f0",
@@ -2345,6 +2358,7 @@ function Flipbook() {
                 position: "absolute", inset: 0,
                 backfaceVisibility: "hidden",
                 WebkitBackfaceVisibility: "hidden",
+                ...leafBackAnim,
                 transform: "rotateY(180deg)",
                 borderRadius: "10px 0 0 10px",
                 overflow: "hidden",
@@ -2378,6 +2392,7 @@ function Flipbook() {
                 position: "absolute", inset: 0,
                 backfaceVisibility: "hidden",
                 WebkitBackfaceVisibility: "hidden",
+                ...leafFrontAnim,
                 borderRadius: "10px 0 0 10px",
                 overflow: "hidden",
                 background: "#f5f4f0",
@@ -2401,6 +2416,7 @@ function Flipbook() {
                 position: "absolute", inset: 0,
                 backfaceVisibility: "hidden",
                 WebkitBackfaceVisibility: "hidden",
+                ...leafBackAnim,
                 transform: "rotateY(180deg)",
                 borderRadius: "0 10px 10px 0",
                 overflow: "hidden",
