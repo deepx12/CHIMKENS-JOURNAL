@@ -267,9 +267,27 @@ function Flipbook() {
       pages: Array.isArray(s.pages) ? s.pages.map(sanitizePage) : [],
       coverPage: sanitizePage(s.coverPage),
       ipadArt: sanitizeIpadArt(s.ipadArt),
+      background: typeof s.background === "string" && s.background ? s.background : BG_DATA,
     };
   };
   const loadSaved = () => {
+    // RESET adds a one-time query flag so the browser requests a fresh copy of
+    // index.html instead of reusing a potentially stale edit-mode document.
+    // Consume it here before deciding whether a local draft should win.
+    const url = new URL(window.location.href);
+    const forcePublished = url.searchParams.get("fresh") === "1";
+    if (forcePublished) {
+      try {
+        localStorage.removeItem("flipbook-data");
+        localStorage.removeItem("flipbook-version");
+      } catch (e) {}
+      url.searchParams.delete("fresh");
+      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+      if (typeof __BAKED__ !== "undefined") {
+        try { localStorage.setItem("flipbook-version", String(__BAKED_VERSION__ || 0)); } catch (e) {}
+        return sanitizeState(__BAKED__);
+      }
+    }
     // Version-aware loader: if the baked HTML carries a newer version
     // than what this device last saw, drop the local cache so visitors
     // automatically pick up freshly-published content on any device.
@@ -301,6 +319,7 @@ function Flipbook() {
   const [ipadArt, setIpadArt] = useState(
     savedData.current?.ipadArt || []
   );
+  const [background, setBackground] = useState(savedData.current?.background || BG_DATA);
   const [mode, setMode] = useState("book"); // 'book' | 'ipad'
   const [modeTransition, setModeTransition] = useState(null); // null | 'to-ipad' | 'to-book'
   const [ipadIdx, setIpadIdx] = useState(0);
@@ -318,8 +337,15 @@ function Flipbook() {
   const [resizingImg, setResizingImg] = useState(null);
   const [rotatingImg, setRotatingImg] = useState(null);
   const [undoStack, setUndoStack] = useState([]);
+  const [transformFeedback, setTransformFeedback] = useState(null);
+  const [snapGuides, setSnapGuides] = useState({ x: false, y: false });
+  // This is updated by the viewport effect below. Starting with a safe value
+  // also keeps the early edit/keyboard effects available during first render.
+  const [isMobile, setIsMobile] = useState(false);
   const isEditMode = new URLSearchParams(window.location.search).get("edit") === "chimkens2025";
   const fileRef = useRef(null);
+  const backgroundFileRef = useRef(null);
+  const bookRef = useRef(null);
   const animRef = useRef(null);
   const dragStart = useRef({ x: 0, y: 0, origX: 0, origY: 0 });
   const resizeStart = useRef({ x: 0, y: 0, origW: 0, origH: 0 });
@@ -378,13 +404,13 @@ function Flipbook() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       try {
-        localStorage.setItem("flipbook-data", JSON.stringify({ pages, coverPage, ipadArt }));
+        localStorage.setItem("flipbook-data", JSON.stringify({ pages, coverPage, ipadArt, background }));
       } catch (e) {
         console.warn("Save failed — storage may be full", e);
       }
     }, 500); // debounce 500ms
     return () => clearTimeout(saveTimer.current);
-  }, [pages, coverPage, ipadArt]);
+  }, [pages, coverPage, ipadArt, background]);
 ﻿
   // Number of spreads: cover + ceil(contentPages/2) + back
   // Book grows with the pages array — each spread holds 2 page sides,
@@ -546,9 +572,12 @@ function Flipbook() {
     if (direction === "next" && currentSpread >= maxSpread) return;
     if (direction === "prev" && currentSpread <= 0) return;
 
-    const duration = timeSinceLast < 300 ? 200
-      : timeSinceLast < 600 ? 270
-      : 340;
+    // Paper-style motion: a quick, deliberate start with a soft settle.
+    // Keeping this CSS-driven preserves the existing reliable page pairing
+    // while allowing the compositor to carry the full turn at 60 fps.
+    const duration = timeSinceLast < 300 ? 280
+      : timeSinceLast < 600 ? 360
+      : 460;
     flipDurationRef.current = duration;
     flipDirRef.current = direction;
 
@@ -746,6 +775,30 @@ function Flipbook() {
     uploadTargetRef.current = null;
   }, []);
 
+  // A background belongs to the notebook itself, not a page.  Resize it on
+  // import so a custom texture stays sharp without making publishes enormous.
+  const handleBackgroundUpload = useCallback((e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const image = new Image();
+      image.onload = () => {
+        const maxEdge = 1920;
+        const scale = Math.min(1, maxEdge / Math.max(image.width, image.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(image.width * scale);
+        canvas.height = Math.round(image.height * scale);
+        canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+        try { setBackground(canvas.toDataURL("image/jpeg", 0.82)); }
+        catch { setBackground(event.target.result); }
+      };
+      image.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  }, []);
+
   // Determine what the "+IMG" button should target based on the currently viewed spread.
   // side = "left" | "right" | null — for spreads, picks which page to target. Null = cover/back.
   const pickUploadTarget = (side) => {
@@ -759,6 +812,27 @@ function Flipbook() {
     if (side === "right" && rightIdx < pages.length) return { kind: "page", pageIdx: rightIdx };
     return { kind: "page", pageIdx: leftIdx };
   };
+
+  // Helper to update an image in pages or coverPage.
+  const updateImage = useCallback((pageIdx, imgId, updater) => {
+    if (pageIdx === "cover") {
+      setCoverPage(prev => {
+        const images = [...prev.images];
+        const i = images.findIndex(im => im.id === imgId);
+        if (i >= 0) images[i] = updater(images[i]);
+        return { ...prev, images };
+      });
+      return;
+    }
+    setPages(prev => {
+      const next = [...prev];
+      const images = [...next[pageIdx].images];
+      const i = images.findIndex(im => im.id === imgId);
+      if (i >= 0) images[i] = updater(images[i]);
+      next[pageIdx] = { ...next[pageIdx], images };
+      return next;
+    });
+  }, []);
 
   // Stretch the selected image across both pages of its spread as one photo.
   const spanSelectedImage = useCallback(() => {
@@ -804,8 +878,35 @@ function Flipbook() {
     updateImage(selectedImg.pageIdx, selectedImg.imgId, img => {
       const newW = Math.max(60, Math.min(PAGE_W * 2, img.w * factor));
       const newH = newW * (img.h / img.w);
-      return { ...img, w: newW, h: newH };
+      // Keep the image centered while zooming, like a design editor.
+      return {
+        ...img,
+        x: img.x - (newW - img.w) / 2,
+        y: img.y - (newH - img.h) / 2,
+        w: newW, h: newH,
+      };
     });
+  }, [selectedImg, updateImage]);
+
+  // Fit the selected artwork inside a page with a little breathing room.
+  // This is intentionally a one-tap recovery action for images that have
+  // become too large or difficult to position.
+  const fitSelectedImage = useCallback(() => {
+    if (!selectedImg) return;
+    updateImage(selectedImg.pageIdx, selectedImg.imgId, img => {
+      const margin = 42;
+      const scale = Math.min((PAGE_W - margin * 2) / img.w, (PAGE_H - margin * 2) / img.h);
+      const w = img.w * scale;
+      const h = img.h * scale;
+      return { ...img, x: (PAGE_W - w) / 2, y: (PAGE_H - h) / 2, w, h };
+    });
+  }, [selectedImg, updateImage]);
+
+  const centerSelectedImage = useCallback(() => {
+    if (!selectedImg) return;
+    updateImage(selectedImg.pageIdx, selectedImg.imgId, img => ({
+      ...img, x: (PAGE_W - img.w) / 2, y: (PAGE_H - img.h) / 2,
+    }));
   }, [selectedImg, updateImage]);
 
   // Insert a blank spread immediately after the current content spread.
@@ -944,59 +1045,57 @@ function Flipbook() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [flipTo, selectedImg, pages, coverPage]);
 
-  // Scroll-to-flip on desktop: mouse wheel flips pages with a 500ms debounce
+  // Scroll-to-flip on desktop: mouse wheel flips pages with a 500ms debounce.
+  // When artwork is selected, the wheel becomes a precise zoom control instead.
   // so one spin = one flip rather than racing through the whole book.
   useEffect(() => {
     if (isMobile) return;
     let lastWheel = 0;
     const handleWheel = (e) => {
+      if (isEditMode && selectedImg) {
+        e.preventDefault();
+        zoomSelectedImage(e.deltaY < 0 ? 1.08 : 0.92);
+        return;
+      }
       const now = Date.now();
       if (now - lastWheel < 500) return;
       lastWheel = now;
       if (e.deltaY > 30) flipTo("next");
       else if (e.deltaY < -30) flipTo("prev");
     };
-    window.addEventListener("wheel", handleWheel, { passive: true });
+    window.addEventListener("wheel", handleWheel, { passive: false });
     return () => window.removeEventListener("wheel", handleWheel);
-  }, [isMobile, flipTo]);
+  }, [isMobile, isEditMode, selectedImg, flipTo, zoomSelectedImage]);
 ﻿
-  // Helper to update an image in pages or coverPage
-  const updateImage = useCallback((pageIdx, imgId, updater) => {
-    if (pageIdx === "cover") {
-      setCoverPage(prev => {
-        const images = [...prev.images];
-        const i = images.findIndex(im => im.id === imgId);
-        if (i >= 0) images[i] = updater(images[i]);
-        return { ...prev, images };
-      });
-    } else {
-      setPages(prev => {
-        const next = [...prev];
-        const images = [...next[pageIdx].images];
-        const i = images.findIndex(im => im.id === imgId);
-        if (i >= 0) images[i] = updater(images[i]);
-        next[pageIdx] = { ...next[pageIdx], images };
-        return next;
-      });
-    }
-  }, []);
 ﻿
   // Global mouse handlers for image drag/resize
   useEffect(() => {
     if (!isEditMode) return; // visitors never attach edit handlers
     const handleMouseMove = (e) => {
+      // The book is visually scaled to fit the viewport. Convert pointer
+      // movement back to page units so edits stay accurate at every screen size.
+      const interactionScale = Math.max(0.1, (bookRef.current?.getBoundingClientRect().height || PAGE_H) / PAGE_H);
       if (draggingImg) {
-        const dx = e.clientX - dragStart.current.x;
-        const dy = e.clientY - dragStart.current.y;
+        const dx = (e.clientX - dragStart.current.x) / interactionScale;
+        const dy = (e.clientY - dragStart.current.y) / interactionScale;
+        let x = dragStart.current.origX + dx;
+        let y = dragStart.current.origY + dy;
+        const snapX = Math.abs((x + 120) - PAGE_W / 2) < 12;
+        const snapY = Math.abs((y + 120) - PAGE_H / 2) < 12;
+        if (snapX) x = PAGE_W / 2 - 120;
+        if (snapY) y = PAGE_H / 2 - 120;
+        setSnapGuides({ x: snapX, y: snapY });
+        setTransformFeedback({ x: e.clientX + 16, y: e.clientY + 16, w: null, h: null, rotation: null });
         updateImage(draggingImg.pageIdx, draggingImg.imgId, img => ({
-          ...img, x: dragStart.current.origX + dx, y: dragStart.current.origY + dy
+          ...img, x, y
         }));
       }
       if (resizingImg) {
-        const dx = e.clientX - resizeStart.current.x;
+        const dx = (e.clientX - resizeStart.current.x) / interactionScale;
         const aspectRatio = resizeStart.current.origW / resizeStart.current.origH;
-        const newW = Math.max(50, resizeStart.current.origW + dx);
+        const newW = Math.max(60, Math.min(PAGE_W * 2, resizeStart.current.origW + dx));
         const newH = newW / aspectRatio;
+        setTransformFeedback({ x: e.clientX + 16, y: e.clientY + 16, w: newW, h: newH, rotation: null });
         updateImage(resizingImg.pageIdx, resizingImg.imgId, img => ({
           ...img, w: newW, h: newH
         }));
@@ -1007,6 +1106,7 @@ function Flipbook() {
         const angle = Math.atan2(e.clientY - cy, e.clientX - cx) * (180 / Math.PI);
         const delta = angle - rotateStart.current.angle;
         const newRotation = rotateStart.current.origRotation + delta;
+        setTransformFeedback({ x: e.clientX + 16, y: e.clientY + 16, w: null, h: null, rotation: newRotation });
         updateImage(rotatingImg.pageIdx, rotatingImg.imgId, img => ({
           ...img, rotation: newRotation
         }));
@@ -1043,6 +1143,8 @@ function Flipbook() {
       setDraggingImg(null);
       setResizingImg(null);
       setRotatingImg(null);
+      setTransformFeedback(null);
+      setSnapGuides({ x: false, y: false });
     };
     const handleTouchMove = (e) => {
       if (draggingImg || resizingImg || rotatingImg) e.preventDefault();
@@ -1165,6 +1267,7 @@ function Flipbook() {
             return (
               <div
                 key={img.id}
+                className={isSelected ? "canva-selected" : ""}
                 style={{
                   position: "absolute",
                   left: img.x, top: img.y,
@@ -1175,6 +1278,7 @@ function Flipbook() {
                 }}
               >
                 <div
+                  className="canva-art"
                   onMouseDown={!isEditMode ? undefined : (e) => {
                     e.stopPropagation();
                     setSelectedImg({ pageIdx: contentIdx, imgId: img.id });
@@ -1201,6 +1305,7 @@ function Flipbook() {
                 </div>
                 {isSelected && isEditMode && (
                   <div
+                    className="canva-resize-handle"
                     onMouseDown={(e) => {
                       e.stopPropagation();
                       setResizingImg({ pageIdx: contentIdx, imgId: img.id });
@@ -1229,6 +1334,7 @@ function Flipbook() {
                 ].map((pos, i) => (
                   <div
                     key={`rot-${i}`}
+                    className="canva-rotate"
                     onMouseDown={(e) => {
                       e.stopPropagation();
                       e.preventDefault();
@@ -1314,6 +1420,7 @@ function Flipbook() {
             return (
               <div
                 key={img.id}
+                className={isSelected ? "canva-selected" : ""}
                 style={{
                   position: "absolute",
                   left: img.x, top: img.y,
@@ -1325,6 +1432,7 @@ function Flipbook() {
               >
                 {/* Image itself — draggable */}
                 <div
+                  className="canva-art"
                   onMouseDown={!isEditMode ? undefined : (e) => {
                     e.stopPropagation();
                     setSelectedImg({ pageIdx: contentIdx, imgId: img.id });
@@ -1352,6 +1460,7 @@ function Flipbook() {
                 {/* Corner resize handle (bottom-right, inside) */}
                 {isSelected && (
                   <div
+                    className="canva-resize-handle"
                     onMouseDown={(e) => {
                       e.stopPropagation();
                       setResizingImg({ pageIdx: contentIdx, imgId: img.id });
@@ -1381,6 +1490,7 @@ function Flipbook() {
                 ].map((pos, i) => (
                   <div
                     key={`rot-${i}`}
+                    className="canva-rotate"
                     onMouseDown={(e) => {
                       e.stopPropagation();
                       e.preventDefault();
@@ -1527,12 +1637,10 @@ function Flipbook() {
     // fine pointer) regardless of width, OR if the screen is narrow.
     return narrow || (isTouch && (!hasHover || !hasFinePointer));
   };
-  const [isMobile, setIsMobile] = useState(detectTouchLayout);
   // Separate flag for iPad-like widths so we can tune scale/padding.
   const [isTablet, setIsTablet] = useState(() =>
     typeof window !== "undefined" && window.innerWidth >= 700 && window.innerWidth < 1200
   );
-  const bookRef = useRef(null);
   useEffect(() => {
     const calcScale = () => {
       const mobile = detectTouchLayout();
@@ -1753,6 +1861,11 @@ function Flipbook() {
   const showLeft = isSpread && !hideStatic && !leavingCover;
   const showRight = (isSpread && !hideStatic) || leavingCover;
   const showSpine = showLeft && showRight && !leavingCover;
+  const selectedImageData = selectedImg
+    ? (selectedImg.pageIdx === "cover"
+      ? coverPage.images.find(im => im.id === selectedImg.imgId)
+      : pages[selectedImg.pageIdx]?.images?.find(im => im.id === selectedImg.imgId))
+    : null;
 ﻿
   return (
     <div style={{
@@ -1774,7 +1887,7 @@ function Flipbook() {
       {/* Paper background */}
       <div style={{
         position: "absolute", inset: 0,
-        backgroundImage: `url(${BG_DATA})`,
+        backgroundImage: `url(${background})`,
         backgroundSize: "cover",
         backgroundPosition: "center top",
         backgroundRepeat: "no-repeat",
@@ -1790,6 +1903,20 @@ function Flipbook() {
           40% { box-shadow: 0 22px 70px rgba(0,0,0,0.55), 0 0 80px rgba(120,180,255,0.55); }
           100% { box-shadow: 0 22px 70px rgba(0,0,0,0.55), 0 0 30px rgba(120,180,255,0.18); }
         }
+        @keyframes canvaSelectionIn { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: scale(1); } }
+        @keyframes canvaHandleIn { from { opacity: 0; transform: scale(.45); } to { opacity: 1; transform: scale(1); } }
+        .canva-selected { animation: canvaSelectionIn 150ms ease-out; filter: drop-shadow(0 7px 14px rgba(139,92,246,.2)); }
+        .canva-selected > .canva-art { outline: 2px solid #8B5CF6 !important; outline-offset: 3px; border-radius: 4px; box-shadow: 0 0 0 5px rgba(139,92,246,.12); }
+        .canva-resize-handle { width: 18px !important; height: 18px !important; right: -10px !important; bottom: -10px !important; background: #fff !important; border: 2px solid #8B5CF6 !important; border-radius: 50% !important; box-shadow: 0 3px 10px rgba(15,23,42,.26) !important; transition: transform 150ms cubic-bezier(.2,.8,.2,1), box-shadow 150ms ease !important; animation: canvaHandleIn 180ms ease-out both; }
+        .canva-resize-handle:hover { transform: scale(1.15); box-shadow: 0 5px 15px rgba(15,23,42,.32) !important; }
+        .canva-rotate { width: 18px !important; height: 18px !important; background: #fff !important; border: 2px solid #8B5CF6 !important; box-shadow: 0 3px 10px rgba(15,23,42,.26) !important; transition: transform 150ms ease !important; }
+        .canva-rotate:hover { transform: scale(1.15); }
+        .canva-rotate:not(:first-of-type) { display: none !important; }
+        .canva-rotate:first-of-type { top: -48px !important; left: calc(50% - 9px) !important; right: auto !important; }
+        .canva-rotate:first-of-type::after { content: ''; position: absolute; width: 1px; height: 25px; background: #8B5CF6; left: 50%; top: 16px; }
+        .canva-glass { background: rgba(255,255,255,.78); backdrop-filter: blur(16px) saturate(1.3); -webkit-backdrop-filter: blur(16px) saturate(1.3); border: 1px solid rgba(255,255,255,.8); box-shadow: 0 14px 38px rgba(15,23,42,.16); }
+        .canva-icon-button { border: 0; background: transparent; border-radius: 9px; padding: 7px 9px; color: #334155; font: 600 11px/1 'Space Mono', monospace; cursor: pointer; transition: background 150ms ease, transform 150ms ease; }
+        .canva-icon-button:hover { background: rgba(139,92,246,.12); color: #6d28d9; transform: translateY(-1px); }
       `}</style>
 
       {/* NOTE: the mode-switch logic is applied directly to bookRef below
@@ -2050,7 +2177,7 @@ function Flipbook() {
                 transformOrigin: "left center",
                 transform: `rotateY(${flipAngle}deg)`,
                 transition: flipProgress === 1
-                  ? `transform ${flipDurationRef.current}ms cubic-bezier(0.4, 0, 0.2, 1)`
+                  ? `transform ${flipDurationRef.current}ms cubic-bezier(0.16, 1, 0.3, 1)`
                   : "none",
                 transformStyle: "preserve-3d",
                 willChange: "transform",
@@ -2106,7 +2233,7 @@ function Flipbook() {
                 transformOrigin: "right center",
                 transform: `rotateY(${flipAngle}deg)`,
                 transition: flipProgress === 1
-                  ? `transform ${flipDurationRef.current}ms cubic-bezier(0.4, 0, 0.2, 1)`
+                  ? `transform ${flipDurationRef.current}ms cubic-bezier(0.16, 1, 0.3, 1)`
                   : "none",
                 transformStyle: "preserve-3d",
                 willChange: "transform",
@@ -2460,10 +2587,33 @@ function Flipbook() {
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>{"←"}</button>
 ﻿
+        {isEditMode && <button onClick={() => backgroundFileRef.current.click()} style={{
+          background: "rgba(25,50,72,0.88)", backdropFilter: "blur(8px)",
+          border: "1.5px solid rgba(100,175,220,0.35)", color: "rgba(220,245,255,0.96)",
+          padding: isMobile ? "14px 12px" : "10px 16px", borderRadius: 8, cursor: "pointer",
+          fontSize: isMobile ? 10 : 11, letterSpacing: 2,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
+        }}>BG</button>}
+
+        {isEditMode && background !== BG_DATA && <button onClick={() => setBackground(BG_DATA)} style={{
+          background: "rgba(75,65,35,0.88)", backdropFilter: "blur(8px)",
+          border: "1.5px solid rgba(180,150,80,0.32)", color: "rgba(255,240,195,0.96)",
+          padding: isMobile ? "14px 12px" : "10px 16px", borderRadius: 8, cursor: "pointer",
+          fontSize: isMobile ? 9 : 10, letterSpacing: 1,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
+        }}>BG RESET</button>}
+
         {isEditMode && <button onClick={() => {
           if (confirm("Clear all local edits? This wipes your browser's cached pages and reloads from the published version.")) {
-            try { localStorage.removeItem("flipbook-data"); } catch(e) {}
-            window.location.reload();
+            try {
+              localStorage.removeItem("flipbook-data");
+              localStorage.removeItem("flipbook-version");
+            } catch(e) {}
+            // A plain reload may keep serving the same cached edit URL. Give
+            // this one navigation a unique URL, then loadSaved removes it.
+            const url = new URL(window.location.href);
+            url.searchParams.set("fresh", "1");
+            window.location.replace(url.toString());
           }
         }} style={{
           background: "rgba(120,30,30,0.82)", backdropFilter: "blur(8px)",
@@ -2538,6 +2688,26 @@ function Flipbook() {
         )}
 
         {/* Zoom in / out — scale selected image by ±20% per tap */}
+        {isEditMode && selectedImg && (
+          <button onClick={fitSelectedImage} title="Fit image inside this page" style={{
+            background: "rgba(18,72,90,0.9)", backdropFilter: "blur(8px)",
+            border: "1.5px solid rgba(80,185,210,0.45)", color: "rgba(220,250,255,0.98)",
+            padding: isMobile ? "14px 13px" : "10px 16px", borderRadius: 8, cursor: "pointer",
+            fontSize: isMobile ? 10 : 11, letterSpacing: 1.5,
+            boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
+          }}>FIT</button>
+        )}
+
+        {isEditMode && selectedImg && (
+          <button onClick={centerSelectedImage} title="Center image on this page" style={{
+            background: "rgba(42,58,85,0.9)", backdropFilter: "blur(8px)",
+            border: "1.5px solid rgba(120,155,220,0.42)", color: "rgba(230,240,255,0.98)",
+            padding: isMobile ? "14px 13px" : "10px 16px", borderRadius: 8, cursor: "pointer",
+            fontSize: isMobile ? 10 : 11, letterSpacing: 1.5,
+            boxShadow: "0 2px 12px rgba(0,0,0,0.22)", transition: "all 0.15s ease",
+          }}>CENTER</button>
+        )}
+
         {isEditMode && selectedImg && (
           <button onClick={() => zoomSelectedImage(1.1)} style={{
             background: "rgba(20,50,20,0.88)", backdropFilter: "blur(8px)",
@@ -2631,7 +2801,7 @@ function Flipbook() {
               squeezePage(coverPage),
               Promise.all(ipadArt.map(async art => ({ ...art, src: await squeezeImg(art.src) }))),
             ]);
-            const state = { pages: sqPages, coverPage: sqCover, ipadArt: sqIpad };
+            const state = { pages: sqPages, coverPage: sqCover, ipadArt: sqIpad, background };
             const body = JSON.stringify({ password: pwd, state });
             // Vercel serverless functions cap request bodies around 4.5MB.
             const mb = body.length / (1024 * 1024);
@@ -2692,8 +2862,25 @@ function Flipbook() {
           }}>{"→"}</button>
       </div>
 ﻿
+      {isEditMode && selectedImg && selectedImageData && !isMobile && <>
+        <div className="canva-glass" style={{ position: "fixed", top: 26, left: "50%", transform: "translateX(-50%)", zIndex: 70, borderRadius: 14, padding: 5, display: "flex", gap: 2 }}>
+          <button className="canva-icon-button" onClick={centerSelectedImage}>Position</button><button className="canva-icon-button" onClick={spanSelectedImage}>Arrange</button><button className="canva-icon-button" onClick={() => updateImage(selectedImg.pageIdx, selectedImg.imgId, im => ({ ...im, rotation: (im.rotation || 0) + 15 }))}>Rotate</button><button className="canva-icon-button" onClick={fitSelectedImage}>Fit</button><button className="canva-icon-button" onClick={duplicateSelectedImage}>Duplicate</button><button className="canva-icon-button" onClick={deleteSelected} style={{ color: "#dc2626" }}>Delete</button>
+        </div>
+        <aside className="canva-glass" style={{ position: "fixed", top: 82, right: 20, zIndex: 70, width: 210, borderRadius: 18, padding: 16, color: "#1e293b", fontFamily: "'Space Mono', monospace" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.3, marginBottom: 15 }}>TRANSFORM</div>
+          {[['X', 'x'], ['Y', 'y'], ['W', 'w'], ['H', 'h'], ['ROTATE', 'rotation']].map(([label, key]) => <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, marginBottom: 9 }}><span style={{ width: 48, color: '#64748b' }}>{label}</span><input value={Math.round(selectedImageData[key] || 0)} onChange={e => { const n = Number(e.target.value); if (Number.isFinite(n)) updateImage(selectedImg.pageIdx, selectedImg.imgId, im => ({ ...im, [key]: n })); }} style={{ width: '100%', border: '1px solid #e2e8f0', borderRadius: 7, background: 'rgba(255,255,255,.74)', padding: '7px 8px', font: '600 11px Space Mono', color: '#334155', outline: 'none' }} /></label>)}
+          <div style={{ borderTop: '1px solid #e2e8f0', margin: '12px 0', paddingTop: 12, fontSize: 10, color: '#64748b' }}>Opacity <b style={{ float: 'right', color: '#334155' }}>100%</b></div><div style={{ fontSize: 10, color: '#64748b' }}>Layer order <b style={{ float: 'right', color: '#334155' }}>Front</b></div>
+        </aside>
+      </>}
+      {isEditMode && <div className="canva-glass" style={{ position: "fixed", right: 20, bottom: 20, zIndex: 70, borderRadius: 15, padding: 6, display: 'flex', alignItems: 'center', gap: 5, fontFamily: "'Space Mono', monospace" }}><button className="canva-icon-button" onClick={() => setZoomSmooth(Math.max(0.65, userZoom - .15))}>−</button><input aria-label="Canvas zoom" type="range" min="0.65" max="3.5" step="0.05" value={userZoom} onChange={e => setZoomSmooth(Number(e.target.value))} style={{ width: 92, accentColor: '#8B5CF6' }} /><button className="canva-icon-button" onClick={() => setZoomSmooth(Math.min(3.5, userZoom + .15))}>+</button><button className="canva-icon-button" onClick={() => setZoomSmooth(1)}>{Math.round(userZoom * 100)}%</button><button className="canva-icon-button" onClick={() => setZoomSmooth(1)}>Fit</button><button className="canva-icon-button" onClick={() => setZoomSmooth(1.28)}>Fill</button></div>}
+      {isEditMode && !isMobile && <div className="canva-glass" style={{ position: 'fixed', left: 20, bottom: 20, zIndex: 70, width: 128, height: 80, borderRadius: 13, padding: 8 }}><div style={{ width: '100%', height: '100%', borderRadius: 7, background: 'linear-gradient(135deg,#eef2ff,#e2e8f0)', position: 'relative', overflow: 'hidden' }}><div style={{ position: 'absolute', left: '24%', top: '18%', width: '52%', height: '58%', border: '1.5px solid #8B5CF6', borderRadius: 4, background: 'rgba(139,92,246,.10)' }} /></div></div>}
+      {snapGuides.x && <div style={{ position: 'fixed', left: '50%', top: 0, bottom: 0, width: 1, background: '#ec4899', zIndex: 65, pointerEvents: 'none' }} />}{snapGuides.y && <div style={{ position: 'fixed', top: '50%', left: 0, right: 0, height: 1, background: '#ec4899', zIndex: 65, pointerEvents: 'none' }} />}
+      {transformFeedback && selectedImageData && <div className="canva-glass" style={{ position: 'fixed', left: transformFeedback.x, top: transformFeedback.y, zIndex: 90, borderRadius: 9, padding: '7px 9px', font: "600 10px 'Space Mono', monospace", color: '#334155', pointerEvents: 'none' }}>{transformFeedback.rotation !== null ? `${Math.round(transformFeedback.rotation)}°` : `${Math.round(transformFeedback.w || selectedImageData.w)} × ${Math.round(transformFeedback.h || selectedImageData.h)} · ${Math.round(((transformFeedback.w || selectedImageData.w) / selectedImageData.w) * 100)}%`}</div>}
+
       {isEditMode && <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }}
         onChange={handleFileUpload} />}
+      {isEditMode && <input ref={backgroundFileRef} type="file" accept="image/*" style={{ display: "none" }}
+        onChange={handleBackgroundUpload} />}
 ﻿
 
       {!isMobile && isEditMode && <div style={{
@@ -2701,8 +2888,8 @@ function Flipbook() {
         fontSize: 9, color: "rgba(40,28,14,0.35)",
         fontFamily: "'Space Mono', monospace", letterSpacing: 2,
         zIndex: 10, textAlign: "center",
-      }}>scroll to flip &middot; drop or + button to upload &middot; click to select &middot; drag to move &middot; corner to resize &middot; rotate handles to spin &middot; flip h to mirror &middot; dupe to copy &middot; del to remove &middot; ctrl+z to undo</div>}
-      {isMobile && isEditMode && <div style={{ position: "fixed", bottom: 10, fontSize: 9, color: "rgba(40,28,14,0.3)", fontFamily: "'Space Mono', monospace", letterSpacing: 1, zIndex: 10, textAlign: "center" }}>swipe to flip &middot; tap image to select &middot; drag to move &middot; corner to resize &middot; corner dots to rotate</div>}
+      }}>scroll to flip &middot; select art, then use wheel to zoom &middot; drag to move &middot; corner to resize &middot; FIT resets it to the page &middot; CENTER aligns it &middot; rotate handles to spin &middot; flip h to mirror &middot; dupe to copy &middot; del to remove &middot; ctrl+z to undo</div>}
+      {isMobile && isEditMode && <div style={{ position: "fixed", bottom: 10, fontSize: 9, color: "rgba(40,28,14,0.3)", fontFamily: "'Space Mono', monospace", letterSpacing: 1, zIndex: 10, textAlign: "center" }}>tap art to select &middot; drag to move &middot; corner to resize &middot; FIT resets it to the page &middot; corner dots to rotate</div>}
     </div>
   );
 }
