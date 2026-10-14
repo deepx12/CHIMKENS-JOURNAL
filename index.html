@@ -2952,14 +2952,46 @@ function Flipbook() {
               el.onerror = () => res(src);
               el.src = src;
             });
-            const squeezePage = async (pg) => ({ ...pg, images: await Promise.all((pg.images||[]).map(async im => ({ ...im, src: await squeezeImg(im.src) }))) });
+            // Images embedded as data URLs are uploaded to Vercel Blob one at
+            // a time, so publish only sends links. Sending them all inline
+            // hit Vercel's ~4.5MB request limit.
+            const embedded = new Set();
+            const collect = (src) => { if (typeof src === "string" && src.startsWith("data:")) embedded.add(src); };
+            [...pages, coverPage].forEach(pg => (pg.images || []).forEach(im => collect(im.src)));
+            ipadArt.forEach(art => collect(art.src));
+            collect(background);
+            const uploaded = new Map(); // data URL -> stored URL
+            let done = 0;
+            for (const src of embedded) {
+              btn.textContent = `Uploading ${++done}/${embedded.size}…`;
+              const dataUrl = src === background ? src : await squeezeImg(src);
+              const up = await fetch("/api/upload", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ password: pwd, dataUrl }),
+              });
+              const upJson = await up.json().catch(() => ({ error: "Server error (" + up.status + ")" }));
+              if (!up.ok || !upJson.url) throw new Error("Image upload failed: " + (upJson.error || up.status));
+              uploaded.set(src, upJson.url);
+            }
+            const swap = (src) => uploaded.get(src) || src;
+            const swapPage = (pg) => ({ ...pg, images: (pg.images || []).map(im => ({ ...im, src: swap(im.src) })) });
+            // Keep the links locally too, so the draft shrinks and the
+            // next publish doesn't upload the same images again.
+            if (uploaded.size) {
+              setPages(ps => ps.map(swapPage));
+              setCoverPage(swapPage);
+              setIpadArt(arts => arts.map(art => ({ ...art, src: swap(art.src) })));
+              setBackground(swap);
+            }
             btn.textContent = "Publishing…";
-            const [sqPages, sqCover, sqIpad] = await Promise.all([
-              Promise.all(pages.map(squeezePage)),
-              squeezePage(coverPage),
-              Promise.all(ipadArt.map(async art => ({ ...art, src: await squeezeImg(art.src) }))),
-            ]);
-            const state = { pages: sqPages, coverPage: sqCover, ipadArt: sqIpad, background, bgLayout };
+            const state = {
+              pages: pages.map(swapPage),
+              coverPage: swapPage(coverPage),
+              ipadArt: ipadArt.map(art => ({ ...art, src: swap(art.src) })),
+              background: swap(background),
+              bgLayout,
+            };
             const body = JSON.stringify({ password: pwd, state });
             // Vercel serverless functions cap request bodies around 4.5MB.
             const mb = body.length / (1024 * 1024);
@@ -2983,9 +3015,9 @@ function Flipbook() {
               btn.disabled = false;
               return;
             }
-            if (json.ok) alert("✓ " + json.message);
+            if (json.ok) alert("✓ " + json.message + (json.removedImages ? `\nFreed ${json.removedImages} unused image(s) from storage.` : ""));
             else alert("Error: " + json.error);
-          } catch(e) { alert("Network error: " + e.message); }
+          } catch(e) { alert("Publish failed: " + e.message); }
           btn.textContent = isMobile ? "PUBLISH" : "⬆ PUBLISH";
           btn.disabled = false;
         }} style={{

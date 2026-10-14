@@ -4,6 +4,30 @@
 // size limit, unlike the Contents API which silently returns empty
 // content for files over 1 MB and caused earlier data loss.
 
+import { list, del } from "@vercel/blob";
+
+const IMAGE_PREFIX = "journal/images/";
+const CLEANUP_GRACE_MS = 60 * 60 * 1000;
+
+const removeUnusedImages = async (state) => {
+  const json = JSON.stringify(state);
+  const unused = [];
+  let cursor;
+  do {
+    const page = await list({ prefix: IMAGE_PREFIX, cursor, limit: 1000 });
+    for (const blob of page.blobs) {
+      // Public images are referenced by URL, private ones by pathname
+      // (/api/image?p=...), so check for either.
+      const referenced = json.includes(blob.url) || json.includes(encodeURIComponent(blob.pathname));
+      const recent = Date.now() - new Date(blob.uploadedAt).getTime() < CLEANUP_GRACE_MS;
+      if (!referenced && !recent) unused.push(blob.url);
+    }
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+  if (unused.length) await del(unused);
+  return unused.length;
+};
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -127,7 +151,19 @@ export default async function handler(req, res) {
       body: JSON.stringify({ sha: commit.sha, force: false }),
     });
 
-    return res.status(200).json({ ok: true, message: "Published! Visitors will see changes in ~30 seconds." });
+    // 10. Free Blob storage for images no longer in the journal. Images
+    //     uploaded in the last hour are kept, in case another device has
+    //     added them to a draft it hasn't published yet.
+    const removed = await removeUnusedImages(stateWithVersion).catch((err) => {
+      console.error("Image cleanup error:", err);
+      return 0;
+    });
+
+    return res.status(200).json({
+      ok: true,
+      removedImages: removed,
+      message: "Published! Visitors will see changes in ~30 seconds.",
+    });
   } catch (err) {
     console.error("Publish error:", err);
     return res.status(err.status || 500).json({ error: err.message });
