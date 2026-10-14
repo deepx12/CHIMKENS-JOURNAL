@@ -227,6 +227,44 @@ const FLIP_SWAP_AT = 0.45;
 // children (images, shadows), so the turned-away face stays visible mirrored.
 // Each face is therefore switched off/on by opacity exactly at this moment.
 const FLIP_HALF_AT = 0.215;
+// Admin password, remembered for this browser tab only so uploads and
+// publishes don't keep asking.
+const ADMIN_PW_KEY = "chimkens-admin-pw";
+const getAdminPassword = (askIfMissing = true) => {
+  let pw = null;
+  try { pw = sessionStorage.getItem(ADMIN_PW_KEY); } catch (e) {}
+  if (!pw && askIfMissing) {
+    pw = prompt("Admin password:");
+    if (pw) { try { sessionStorage.setItem(ADMIN_PW_KEY, pw); } catch (e) {} }
+  }
+  return pw || null;
+};
+const forgetAdminPassword = () => { try { sessionStorage.removeItem(ADMIN_PW_KEY); } catch (e) {} };
+
+// Re-compress a large JPEG/PNG data URL (e.g. from an older draft) so it
+// fits comfortably in one upload request. PNGs stay PNG for transparency.
+const squeezeDataUrl = (src) => new Promise((res) => {
+  if (!src || src.length < 350_000) { res(src); return; }
+  const isJpeg = src.startsWith("data:image/jpeg") || src.startsWith("data:image/jpg");
+  const isPngSrc = src.startsWith("data:image/png");
+  if (!isJpeg && !isPngSrc) { res(src); return; }
+  const el = new Image();
+  el.onload = () => {
+    const MAX = isPngSrc ? 850 : 1000;
+    const long = Math.max(el.width, el.height);
+    const s = long > MAX ? MAX / long : 1;
+    const cv = document.createElement("canvas");
+    cv.width = Math.round(el.width * s); cv.height = Math.round(el.height * s);
+    cv.getContext("2d").drawImage(el, 0, 0, cv.width, cv.height);
+    try {
+      const out = isPngSrc ? cv.toDataURL("image/png") : cv.toDataURL("image/jpeg", 0.72);
+      res(out.length < src.length ? out : src);
+    } catch { res(src); }
+  };
+  el.onerror = () => res(src);
+  el.src = src;
+});
+
 const MIN_USER_ZOOM = 0.5;
 const MAX_USER_ZOOM = 3.5;
 ﻿
@@ -439,6 +477,77 @@ function Flipbook() {
     }, 500); // debounce 500ms
     return () => clearTimeout(saveTimer.current);
   }, [pages, coverPage, ipadArt, background, bgLayout]);
+
+  // Upload new pictures to Vercel Blob as soon as they're added, then swap
+  // the embedded data URL for the stored link. The draft in localStorage
+  // (~5MB on Safari) then only holds links, so there's no picture limit,
+  // and publishing just sends links. One shared promise per picture lets
+  // publish wait on an upload that's already running instead of repeating it.
+  const uploadsRef = useRef(new Map()); // data URL -> Promise<stored URL>
+  const [uploadStatus, setUploadStatus] = useState({ pending: 0, failed: 0 });
+  const uploadImage = useCallback((dataUrl) => {
+    const running = uploadsRef.current.get(dataUrl);
+    if (running) return running;
+    const task = (async () => {
+      const password = getAdminPassword();
+      if (!password) throw new Error("Admin password needed to upload pictures");
+      // New pictures are already compressed on add; only shrink ones (from
+      // older drafts) too large for a single request, so the BG stays sharp.
+      const body = dataUrl.length > 3_000_000 ? await squeezeDataUrl(dataUrl) : dataUrl;
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password, dataUrl: body }),
+      });
+      const json = await res.json().catch(() => ({ error: "Server error (" + res.status + ")" }));
+      if (res.status === 401) forgetAdminPassword();
+      if (!res.ok || !json.url) throw new Error(json.error || "Upload failed (" + res.status + ")");
+      return json.url;
+    })();
+    uploadsRef.current.set(dataUrl, task);
+    // A failed upload is forgotten so the next attempt can retry it.
+    task.catch(() => uploadsRef.current.delete(dataUrl));
+    return task;
+  }, []);
+  const replaceImageSrc = useCallback((from, to) => {
+    const swapPage = (pg) => (pg.images || []).some(im => im.src === from)
+      ? { ...pg, images: pg.images.map(im => im.src === from ? { ...im, src: to } : im) }
+      : pg;
+    setPages(ps => ps.map(swapPage));
+    setCoverPage(swapPage);
+    setIpadArt(arts => arts.map(art => art.src === from ? { ...art, src: to } : art));
+    setBackground(bg => bg === from ? to : bg);
+    setUndoStack(st => st.map(e => e.image && e.image.src === from ? { ...e, image: { ...e.image, src: to } } : e));
+  }, []);
+  const uploadPromptDeclined = useRef(false);
+  useEffect(() => {
+    if (!isEditMode) return;
+    const timer = setTimeout(() => {
+      const embedded = new Set();
+      const collect = (src) => { if (typeof src === "string" && src.startsWith("data:")) embedded.add(src); };
+      [...pages, coverPage].forEach(pg => (pg.images || []).forEach(im => collect(im.src)));
+      ipadArt.forEach(art => collect(art.src));
+      collect(background);
+      const fresh = [...embedded].filter(src => !uploadsRef.current.has(src));
+      if (!fresh.length) return;
+      // Ask for the password at most once; if declined, publish asks again.
+      if (!getAdminPassword(!uploadPromptDeclined.current)) { uploadPromptDeclined.current = true; return; }
+      setUploadStatus(s => ({ ...s, failed: 0 }));
+      fresh.forEach(src => {
+        setUploadStatus(s => ({ ...s, pending: s.pending + 1 }));
+        uploadImage(src)
+          .then(url => new Promise(done => {
+            // Load the stored copy first so the swap doesn't flash blank.
+            const img = new Image();
+            img.onload = img.onerror = () => done(url);
+            img.src = url;
+          }))
+          .then(url => { replaceImageSrc(src, url); setUploadStatus(s => ({ ...s, pending: s.pending - 1 })); })
+          .catch(() => setUploadStatus(s => ({ pending: s.pending - 1, failed: s.failed + 1 })));
+      });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [isEditMode, pages, coverPage, ipadArt, background, uploadImage, replaceImageSrc]);
 ﻿
   // Number of spreads: cover + ceil(contentPages/2) + back
   // Book grows with the pages array — each spread holds 2 page sides,
@@ -2922,39 +3031,15 @@ function Flipbook() {
         )}
 
         {isEditMode && <button onClick={async () => {
-          const pwd = prompt("Admin password:");
+          const pwd = getAdminPassword();
           if (!pwd) return;
           const btn = document.activeElement;
-          btn.textContent = "Compressing…";
+          btn.textContent = "Preparing…";
           btn.disabled = true;
           try {
-            // Re-compress any image that's still large (uploaded before tighter
-            // limits, or pasted as a raw data URL). JPEG only — PNGs may have
-            // transparency we must not lose by converting.
-            const squeezeImg = (src) => new Promise((res) => {
-              if (!src || src.length < 350_000) { res(src); return; }
-              const isJpeg = src.startsWith("data:image/jpeg") || src.startsWith("data:image/jpg");
-              const isPngSrc = src.startsWith("data:image/png");
-              if (!isJpeg && !isPngSrc) { res(src); return; }
-              const el = new Image();
-              el.onload = () => {
-                const MAX = isPngSrc ? 850 : 1000;
-                const long = Math.max(el.width, el.height);
-                const s = long > MAX ? MAX / long : 1;
-                const cv = document.createElement("canvas");
-                cv.width = Math.round(el.width * s); cv.height = Math.round(el.height * s);
-                cv.getContext("2d").drawImage(el, 0, 0, cv.width, cv.height);
-                try {
-                  const out = isPngSrc ? cv.toDataURL("image/png") : cv.toDataURL("image/jpeg", 0.72);
-                  res(out.length < src.length ? out : src);
-                } catch { res(src); }
-              };
-              el.onerror = () => res(src);
-              el.src = src;
-            });
-            // Images embedded as data URLs are uploaded to Vercel Blob one at
-            // a time, so publish only sends links. Sending them all inline
-            // hit Vercel's ~4.5MB request limit.
+            // Pictures not yet uploaded in the background (or still uploading)
+            // go to Vercel Blob first, so publish only sends links. Sending
+            // them inline hit Vercel's ~4.5MB request limit.
             const embedded = new Set();
             const collect = (src) => { if (typeof src === "string" && src.startsWith("data:")) embedded.add(src); };
             [...pages, coverPage].forEach(pg => (pg.images || []).forEach(im => collect(im.src)));
@@ -2964,15 +3049,8 @@ function Flipbook() {
             let done = 0;
             for (const src of embedded) {
               btn.textContent = `Uploading ${++done}/${embedded.size}…`;
-              const dataUrl = src === background ? src : await squeezeImg(src);
-              const up = await fetch("/api/upload", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ password: pwd, dataUrl }),
-              });
-              const upJson = await up.json().catch(() => ({ error: "Server error (" + up.status + ")" }));
-              if (!up.ok || !upJson.url) throw new Error("Image upload failed: " + (upJson.error || up.status));
-              uploaded.set(src, upJson.url);
+              try { uploaded.set(src, await uploadImage(src)); }
+              catch (err) { throw new Error("Image upload failed: " + err.message); }
             }
             const swap = (src) => uploaded.get(src) || src;
             const swapPage = (pg) => ({ ...pg, images: (pg.images || []).map(im => ({ ...im, src: swap(im.src) })) });
@@ -3015,6 +3093,7 @@ function Flipbook() {
               btn.disabled = false;
               return;
             }
+            if (res.status === 401) forgetAdminPassword();
             if (json.ok) alert("✓ " + json.message + (json.removedImages ? `\nFreed ${json.removedImages} unused image(s) from storage.` : ""));
             else alert("Error: " + json.error);
           } catch(e) { alert("Publish failed: " + e.message); }
@@ -3067,6 +3146,11 @@ function Flipbook() {
       {snapGuides.x && <div style={{ position: 'fixed', left: '50%', top: 0, bottom: 0, width: 1, background: '#ec4899', zIndex: 65, pointerEvents: 'none' }} />}{snapGuides.y && <div style={{ position: 'fixed', top: '50%', left: 0, right: 0, height: 1, background: '#ec4899', zIndex: 65, pointerEvents: 'none' }} />}
       {transformFeedback && selectedImageData && <div className="canva-glass" style={{ position: 'fixed', left: transformFeedback.x, top: transformFeedback.y, zIndex: 90, borderRadius: 9, padding: '7px 9px', font: "600 10px 'Space Mono', monospace", color: '#334155', pointerEvents: 'none' }}>{transformFeedback.rotation !== null ? `${Math.round(transformFeedback.rotation)}°` : `${Math.round(transformFeedback.w || selectedImageData.w)} × ${Math.round(transformFeedback.h || selectedImageData.h)} · ${Math.round(((transformFeedback.w || selectedImageData.w) / selectedImageData.w) * 100)}%`}</div>}
 
+      {isEditMode && (uploadStatus.pending > 0 || uploadStatus.failed > 0) && <div className="canva-glass" style={{ position: 'fixed', top: isMobile ? 12 : 26, left: isMobile ? 12 : 20, zIndex: 75, borderRadius: 11, padding: '8px 12px', font: "600 10px 'Space Mono', monospace", letterSpacing: 1, color: uploadStatus.pending > 0 ? '#334155' : '#b45309', pointerEvents: 'none' }}>
+        {uploadStatus.pending > 0
+          ? `☁ Saving ${uploadStatus.pending} picture${uploadStatus.pending === 1 ? '' : 's'}…`
+          : `⚠ ${uploadStatus.failed} picture${uploadStatus.failed === 1 ? '' : 's'} not saved yet — will retry`}
+      </div>}
       {isEditMode && <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }}
         onChange={handleFileUpload} />}
       {isEditMode && bgDraft && <div className="canva-glass" style={{ position: "fixed", top: isMobile ? 16 : 82, left: isMobile ? 16 : 20, right: isMobile ? 16 : "auto", zIndex: 80, width: isMobile ? "auto" : 240, borderRadius: 18, padding: 16, color: "#1e293b", fontFamily: "'Space Mono', monospace" }}>
