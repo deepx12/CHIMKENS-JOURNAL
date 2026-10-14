@@ -27,9 +27,9 @@ export default async function handler(req, res) {
   const options = { contentType, addRandomSuffix: true, cacheControlMaxAge: 31536000 };
 
   try {
-    // The store is private, so visitors load images through /api/image.
-    const blob = await put(pathname, body, { ...options, ...blobAuth(req), access: "private" });
-    return res.status(200).json({ url: `/api/image?p=${encodeURIComponent(blob.pathname)}` });
+    // Public store: visitors load images straight from Blob's CDN.
+    const blob = await put(pathname, body, { ...options, ...blobAuth(req), access: "public" });
+    return res.status(200).json({ url: blob.url });
   } catch (error) {
     console.error("Image upload error:", error);
     return res.status(500).json({

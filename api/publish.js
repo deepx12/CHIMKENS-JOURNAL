@@ -17,8 +17,9 @@ const removeUnusedImages = async (state, auth) => {
   do {
     const page = await list({ prefix: IMAGE_PREFIX, cursor, limit: 1000, ...auth });
     for (const blob of page.blobs) {
-      // Pages reference images as /api/image?p=<encoded pathname>.
-      const referenced = json.includes(encodeURIComponent(blob.pathname));
+      // Pages reference public images by URL; older ones from the private
+      // store went through /api/image?p=<encoded pathname>.
+      const referenced = json.includes(blob.url) || json.includes(encodeURIComponent(blob.pathname));
       const recent = Date.now() - new Date(blob.uploadedAt).getTime() < CLEANUP_GRACE_MS;
       if (!referenced && !recent) unused.push(blob.url);
     }

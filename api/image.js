@@ -2,7 +2,8 @@ import { get } from "@vercel/blob";
 import { blobAuth } from "./_blobAuth.js";
 
 // Vercel Serverless Function — /api/image?p=<pathname>
-// Serves journal images when the Blob store is private (see api/upload.js).
+// Serves journal images from a private Blob store. New uploads go to a
+// public store and use its URLs directly; this stays for any older links.
 // Pathnames carry a random suffix and never change, so they cache forever.
 
 const IMAGE_PREFIX = "journal/images/";
