@@ -5,16 +5,17 @@
 // content for files over 1 MB and caused earlier data loss.
 
 import { list, del } from "@vercel/blob";
+import { blobAuth } from "./_blobAuth.js";
 
 const IMAGE_PREFIX = "journal/images/";
 const CLEANUP_GRACE_MS = 60 * 60 * 1000;
 
-const removeUnusedImages = async (state) => {
+const removeUnusedImages = async (state, auth) => {
   const json = JSON.stringify(state);
   const unused = [];
   let cursor;
   do {
-    const page = await list({ prefix: IMAGE_PREFIX, cursor, limit: 1000 });
+    const page = await list({ prefix: IMAGE_PREFIX, cursor, limit: 1000, ...auth });
     for (const blob of page.blobs) {
       // Pages reference images as /api/image?p=<encoded pathname>.
       const referenced = json.includes(encodeURIComponent(blob.pathname));
@@ -23,7 +24,7 @@ const removeUnusedImages = async (state) => {
     }
     cursor = page.hasMore ? page.cursor : undefined;
   } while (cursor);
-  if (unused.length) await del(unused);
+  if (unused.length) await del(unused, auth);
   return unused.length;
 };
 
@@ -153,7 +154,7 @@ export default async function handler(req, res) {
     // 10. Free Blob storage for images no longer in the journal. Images
     //     uploaded in the last hour are kept, in case another device has
     //     added them to a draft it hasn't published yet.
-    const removed = await removeUnusedImages(stateWithVersion).catch((err) => {
+    const removed = await removeUnusedImages(stateWithVersion, blobAuth(req)).catch((err) => {
       console.error("Image cleanup error:", err);
       return 0;
     });

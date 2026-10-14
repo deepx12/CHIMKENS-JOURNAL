@@ -1,4 +1,5 @@
 import { put } from "@vercel/blob";
+import { blobAuth, blobAuthReport } from "./_blobAuth.js";
 
 // Vercel Serverless Function — /api/upload
 // Stores ONE image in Vercel Blob and returns the URL the page should use.
@@ -27,10 +28,12 @@ export default async function handler(req, res) {
 
   try {
     // The store is private, so visitors load images through /api/image.
-    const blob = await put(pathname, body, { ...options, access: "private" });
+    const blob = await put(pathname, body, { ...options, ...blobAuth(req), access: "private" });
     return res.status(200).json({ url: `/api/image?p=${encodeURIComponent(blob.pathname)}` });
   } catch (error) {
     console.error("Image upload error:", error);
-    return res.status(500).json({ error: "Image storage is unavailable: " + error.message });
+    return res.status(500).json({
+      error: `Image storage is unavailable: ${error.message} [${blobAuthReport(req)}]`,
+    });
   }
 }

@@ -1,4 +1,5 @@
 import { get } from "@vercel/blob";
+import { blobAuth } from "./_blobAuth.js";
 
 // Vercel Serverless Function — /api/image?p=<pathname>
 // Serves journal images when the Blob store is private (see api/upload.js).
@@ -14,7 +15,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const result = await get(pathname, { access: "private" });
+    const result = await get(pathname, { ...blobAuth(req), access: "private" });
     if (!result || result.statusCode !== 200) return res.status(404).json({ error: "Image not found" });
     const bytes = Buffer.from(await new Response(result.stream).arrayBuffer());
     const ext = pathname.split(".").pop().toLowerCase();
