@@ -18,7 +18,7 @@ export default async function handler(req, res) {
     if (!result || result.statusCode !== 200) return res.status(404).json({ error: "Image not found" });
     const bytes = Buffer.from(await new Response(result.stream).arrayBuffer());
     const ext = pathname.split(".").pop().toLowerCase();
-    res.setHeader("Content-Type", TYPES[ext] || "application/octet-stream");
+    res.setHeader("Content-Type", result.blob.contentType || TYPES[ext] || "application/octet-stream");
     res.setHeader("Cache-Control", "public, max-age=31536000, s-maxage=31536000, immutable");
     return res.status(200).send(bytes);
   } catch (error) {

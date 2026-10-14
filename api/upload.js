@@ -26,15 +26,9 @@ export default async function handler(req, res) {
   const options = { contentType, addRandomSuffix: true, cacheControlMaxAge: 31536000 };
 
   try {
-    // Public stores serve the blob URL directly. A private store rejects
-    // public writes, so fall back to private and serve it via /api/image.
-    try {
-      const blob = await put(pathname, body, { ...options, access: "public" });
-      return res.status(200).json({ url: blob.url });
-    } catch (publicError) {
-      const blob = await put(pathname, body, { ...options, access: "private" });
-      return res.status(200).json({ url: `/api/image?p=${encodeURIComponent(blob.pathname)}` });
-    }
+    // The store is private, so visitors load images through /api/image.
+    const blob = await put(pathname, body, { ...options, access: "private" });
+    return res.status(200).json({ url: `/api/image?p=${encodeURIComponent(blob.pathname)}` });
   } catch (error) {
     console.error("Image upload error:", error);
     return res.status(500).json({ error: "Image storage is unavailable: " + error.message });
